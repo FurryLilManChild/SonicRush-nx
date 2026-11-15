@@ -1,4 +1,4 @@
-# MPH-nx: Nintendo Switch build of the ndsrecomp runner for Metroid Prime Hunters.
+# SonicRush-nx: Nintendo Switch build of the ndsrecomp runner for Sonic Rush (from MPH-nx).
 #
 # Wraps upstream's runner build (pinned, patched by switch/build.sh) without
 # editing its CMakeLists: adds the Switch layer, renames upstream main(),
@@ -7,7 +7,7 @@
 # Configure with the devkitPro Switch toolchain; see switch/build.sh.
 
 cmake_minimum_required(VERSION 3.20)
-project(mph_nx LANGUAGES C CXX ASM)
+project(sonicrush_nx LANGUAGES C CXX ASM)
 
 if(NOT NINTENDO_SWITCH)
     message(FATAL_ERROR "MPH-nx: configure with the devkitPro Switch toolchain")
@@ -18,12 +18,12 @@ endif()
 # the old target-wide define, kept at its last value: changing a target-wide
 # define recompiles the whole engine. Drop it at the next build that rebuilds
 # everything anyway.
-set(MPHNX_VERSION "switch-native14" CACHE STRING "Build label shown in logs and hbmenu")
+set(MPHNX_VERSION "switch-test1" CACHE STRING "Build label shown in logs and hbmenu")
 set(MPHNX_ENGINE_TAG "switch-native5")
-set(MPHNX_TITLE "MPH-nx" CACHE STRING "Name shown in hbmenu")
+set(MPHNX_TITLE "SonicRush-nx" CACHE STRING "Name shown in hbmenu")
 # Test variants (e.g. the online test, mph-nx-MP) live in their own SD folder
 # /switch/<name>/ with <name>.nro, so they never touch the release install.
-set(MPHNX_APP_NAME "mph-nx" CACHE STRING "SD folder and .nro name")
+set(MPHNX_APP_NAME "sonicrush-nx" CACHE STRING "SD folder and .nro name")
 option(MPHNX_ONLINE "Nintendo WFC through Wiimmfi (Kaeru DNS): network and WFC on at launch" OFF)
 option(MPHNX_PIE_LIBS "Compile the runner's static libraries (game banks included) as -fPIE instead of -fPIC" ON)
 set(MPHNX_PERF_BANK_DIR "" CACHE PATH "Flat-AOT mph_perf_arm9 bank (nds_recompile --flat-execution); empty = faithful only")
@@ -160,8 +160,10 @@ set_source_files_properties("${_runner_dir}/src/main.cpp"
 target_sources(nds_runner PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/nx_main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/nx_platform.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/nx_menunav.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/nx_lockon.cpp")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/nx_menunav_none.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/nx_lockon_none.cpp")
+# SonicRush-nx game profile: Stacked (seamless column) default, no splash skip.
+target_compile_definitions(nds_runner PRIVATE SRNX=1)
 target_compile_definitions(nds_runner PRIVATE MPHNX_VERSION="${MPHNX_ENGINE_TAG}")
 set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/nx_main.cpp" "${NDSRECOMP_ROOT}/runner/src/frontend.cpp" TARGET_DIRECTORY nds_runner
     APPEND PROPERTY COMPILE_DEFINITIONS MPHNX_LABEL="${MPHNX_VERSION}"

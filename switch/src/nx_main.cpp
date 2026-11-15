@@ -1,4 +1,4 @@
-// MPH-nx: Nintendo Switch entry point for the ndsrecomp runner.
+// SonicRush-nx: Nintendo Switch entry point for the ndsrecomp runner (from MPH-nx).
 //
 // Sets up the Horizon environment (logs on the SD card, crash handler,
 // clocks), finds the player's ROM next to the NRO, builds the runner's
@@ -39,10 +39,10 @@ int nds_upstream_main(int argc, char** argv);  // upstream main.cpp, renamed at 
 #endif
 
 #ifndef MPHNX_APP_DIR
-#define MPHNX_APP_DIR "/switch/mph-nx"
+#define MPHNX_APP_DIR "/switch/sonicrush-nx"
 #endif
 #ifndef MPHNX_APP_NAME
-#define MPHNX_APP_NAME "mph-nx"
+#define MPHNX_APP_NAME "sonicrush-nx"
 #endif
 // The SD folder this build lives in. Test variants such as the online test
 // (mph-nx-MP) get their own folder, logs, settings, save and states.
@@ -72,8 +72,8 @@ static void open_logs() {
         localtime_r(&t, &tmv);
         std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tmv);
     }
-    const std::string out = std::string(kLogDir) + "/mph-nx-" + stamp + ".log";
-    const std::string err = std::string(kLogDir) + "/mph-nx-" + stamp + ".err.log";
+    const std::string out = std::string(kLogDir) + "/sonicrush-nx-" + stamp + ".log";
+    const std::string err = std::string(kLogDir) + "/sonicrush-nx-" + stamp + ".err.log";
     // Fully buffered: a line-buffered SD log costs a file-system call per
     // line on the emulation thread. The heartbeat thread flushes once a second.
     static char out_buf[64 * 1024], err_buf[64 * 1024];
@@ -148,7 +148,7 @@ static int put_reg(char* buf, int pos, const char* name, u64 v) {
 extern "C" void __libnx_exception_handler(ThreadExceptionDump* ctx) {
     static char buf[4096];
     int pos = 0;
-    pos = put(buf, pos, "MPH-nx crash, build " MPHNX_VERSION "\n");
+    pos = put(buf, pos, "SonicRush-nx crash, build " MPHNX_VERSION "\n");
     pos = put_reg(buf, pos, "error_desc", ctx->error_desc);
     pos = put_reg(buf, pos, "module_base", g_module_base);
     pos = put_reg(buf, pos, "module_size", g_module_size);
@@ -202,7 +202,7 @@ static void on_terminate() {
         what = e.what();
     } catch (...) {
     }
-    std::fprintf(stderr, "[mph-nx] fatal: uncaught exception: %s\n", what);
+    std::fprintf(stderr, "[sonicrush-nx] fatal: uncaught exception: %s\n", what);
     std::fflush(stderr);
     nx_clocks_restore();
     svcExitProcess();
@@ -238,7 +238,7 @@ static std::string find_rom_in(const char* dir);
 // in the release folder, so the ROM does not need a second copy.
 static std::string find_rom() {
     std::string r = find_rom_in(kAppDir);
-    if (r.empty() && strcmp(kAppDir, "/switch/mph-nx") != 0) r = find_rom_in("/switch/mph-nx");
+    if (r.empty() && strcmp(kAppDir, "/switch/sonicrush-nx") != 0) r = find_rom_in("/switch/sonicrush-nx");
     return r;
 }
 
@@ -252,9 +252,9 @@ static std::string find_rom_in(const char* dir) {
         struct stat st{};
         if (stat(p.c_str(), &st) == 0 && st.st_size == 64 * 1024 * 1024) {
 #if defined(MPHNX_NATIVE)
-            // The native build is generated for USA Rev 1 (AMHE, version 1).
+            // The native build is generated for Sonic Rush USA (ASCE, version 0).
             char code[5]; int version = -1;
-            if (!rom_header(p, code, &version) || strcmp(code, "AMHE") != 0 || version != 1)
+            if (!rom_header(p, code, &version) || strcmp(code, "ASCE") != 0 || version != 0)
                 continue;
 #endif
             found = p;
@@ -269,41 +269,9 @@ static std::string find_rom_in(const char* dir) {
 // Simple on-screen message when the app cannot start
 // ---------------------------------------------------------------------------
 
-// switch-test4 and earlier could not replace mph.sav (FAT refuses a rename
-// onto an existing file), so the newest save was left in mph.sav.tmp. Move it
-// into place once, keeping the old file as mph.sav.old.
-static void recover_pending_save(const std::string& app) {
-    const std::string sav = app + "/mph.sav";
-    const std::string tmp = sav + ".tmp";
-    struct stat st_tmp{}, st_sav{};
-    if (stat(tmp.c_str(), &st_tmp) != 0) return;
-    if (st_tmp.st_size != 262144) {
-        std::printf("[mph-nx] save recovery: ignoring %s (%lld bytes)\n",
-                    tmp.c_str(), (long long)st_tmp.st_size);
-        return;
-    }
-    const bool have_sav = stat(sav.c_str(), &st_sav) == 0;
-    if (have_sav) {
-        const std::string old = sav + ".old";
-        std::remove(old.c_str());
-        if (std::rename(sav.c_str(), old.c_str()) != 0) {
-            std::printf("[mph-nx] save recovery: cannot move mph.sav aside (%s)\n",
-                        std::strerror(errno));
-            return;
-        }
-    }
-    if (std::rename(tmp.c_str(), sav.c_str()) != 0) {
-        std::printf("[mph-nx] save recovery: rename failed (%s)\n", std::strerror(errno));
-        if (have_sav) std::rename((sav + ".old").c_str(), sav.c_str());
-        return;
-    }
-    std::printf("[mph-nx] save recovery: moved mph.sav.tmp to mph.sav%s\n",
-                have_sav ? " (previous kept as mph.sav.old)" : "");
-}
-
 static void show_message_and_wait(const char* text) {
     consoleInit(nullptr);
-    std::printf("\n  MPH-nx (%s)\n\n", MPHNX_VERSION);
+    std::printf("\n  SonicRush-nx (%s)\n\n", MPHNX_VERSION);
     std::printf("%s\n\n  Press + to exit.\n", text);
     consoleUpdate(nullptr);
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
@@ -391,7 +359,7 @@ static void prof_write(const ProfPhase& play, const ProfPhase& load, u64 failed)
     const std::string out = std::string(kLogDir) + "/" + g_prof_name;
     FILE* f = std::fopen(tmp.c_str(), "w");
     if (!f) return;
-    std::fprintf(f, "# mph-nx profile, build %s, module size 0x%llx, unreadable %llu\n",
+    std::fprintf(f, "# sonicrush-nx profile, build %s, module size 0x%llx, unreadable %llu\n",
                  MPHNX_VERSION, (unsigned long long)g_module_size, (unsigned long long)failed);
     prof_dump(f, "play", play);
     prof_dump(f, "load", load);
@@ -489,18 +457,18 @@ int main(int argc, char** argv) {
     open_logs();
     std::set_terminate(on_terminate);
 
-    std::printf("[mph-nx] %s starting\n", MPHNX_VERSION);
-    std::printf("[mph-nx] module base 0x%llx size 0x%llx crash id %08x\n",
+    std::printf("[sonicrush-nx] %s starting\n", MPHNX_VERSION);
+    std::printf("[sonicrush-nx] module base 0x%llx size 0x%llx crash id %08x\n",
                 (unsigned long long)g_module_base, (unsigned long long)g_module_size, g_crash_id);
 
     const AppletType at = appletGetAppletType();
     u64 total = 0;
     svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0);
-    std::printf("[mph-nx] applet type %d, memory %llu MB\n", (int)at, (unsigned long long)(total >> 20));
+    std::printf("[sonicrush-nx] applet type %d, memory %llu MB\n", (int)at, (unsigned long long)(total >> 20));
     if (at != AppletType_Application && at != AppletType_SystemApplication) {
         show_message_and_wait(
-            "  Launch MPH-nx through title takeover:\n"
-            "  hold R while opening any game, then pick MPH-nx.\n"
+            "  Launch SonicRush-nx through title takeover:\n"
+            "  hold R while opening any game, then pick SonicRush-nx.\n"
             "  The Album (applet mode) does not have enough memory.");
         return 0;
     }
@@ -512,16 +480,11 @@ int main(int argc, char** argv) {
     if (rom.empty()) {
         show_message_and_wait(
             "  No ROM found.\n"
-#if defined(MPHNX_NATIVE)
-            "  Put your Metroid Prime Hunters (USA, Rev 1) .nds file\n"
-#else
-            "  Put your Metroid Prime Hunters (USA, revision 0) .nds file\n"
-#endif
+            "  Put your Sonic Rush (USA) .nds file\n"
             "  in " MPHNX_APP_DIR "/ on the SD card, next to " MPHNX_APP_NAME ".nro.");
         return 0;
     }
-    std::printf("[mph-nx] rom: %s\n", rom.c_str());
-    recover_pending_save(kAppDir);
+    std::printf("[sonicrush-nx] rom: %s\n", rom.c_str());
 
     nx_clocks_apply();
 
@@ -545,34 +508,16 @@ int main(int argc, char** argv) {
     add("--interactive");
     add("--screen-layout"); add("stacked");
     // No --fullscreen: the Switch window is created at 1280x720 (patch 0001).
-    add("--mph-prime-controls"); add("on");
-    add("--relative-mouse-touch"); add("on");  // upstream requires it for Prime controls
-#if defined(MPHNX_NATIVE)
-    // Rev 1 keeps its own save. The first launch starts from a copy of the
-    // Rev 0 save so progress carries over; mph.sav itself is never touched.
-    {
-        const std::string rev1 = app + "/mph-rev1.sav";
-        struct stat st{};
-        // A test variant starts from a copy of the release install's save
-        // (read only; /switch/mph-nx is never written by a variant).
-        const std::string seed = strcmp(kAppDir, "/switch/mph-nx") != 0
-            ? std::string("/switch/mph-nx/mph-rev1.sav") : app + "/mph.sav";
-        if (stat(rev1.c_str(), &st) != 0) {
-            if (FILE* in = fopen(seed.c_str(), "rb")) {
-                if (FILE* out = fopen(rev1.c_str(), "wb")) {
-                    char buf[16384]; size_t n;
-                    while ((n = fread(buf, 1, sizeof buf, in)) > 0) fwrite(buf, 1, n, out);
-                    fclose(out);
-                    std::printf("[mph-nx] Rev 1 save started from a copy of %s\n", seed.c_str());
-                }
-                fclose(in);
-            }
-        }
-        add("--save-path"); add(rev1);
-    }
-#else
-    add("--save-path"); add(app + "/mph.sav");
-#endif
+    // Nintendo layout: Switch A/B/X/Y are DS A/B/X/Y (SDL reports Switch
+    // buttons by Xbox position: Switch A arrives as "Pad B", X as "Pad Y").
+    // Order: Up, Down, Left, Right, A, B, X, Y, L, R, Start, Select (button+1).
+    add("--gamepad-bindings"); add("12,13,14,15,2,1,4,3,10,11,7,0");
+    // Special stages and touch prompts: right stick moves a stylus on the
+    // bottom screen, ZR holds it down, right stick press taps.
+    add("--virtual-stylus"); add("on");
+    add("--virtual-stylus-pad-hold-bind"); add("Pad RT");
+    add("--virtual-stylus-pad-tap-bind"); add("Pad R3");
+    add("--save-path"); add(app + "/sonicrush.sav");
     add("--savestate-dir"); add(app + "/states");   // native19: save states (per ROM SHA-1 below)
     add("--firmware-state-path"); add(app + "/firmware-state.bin");
     add("--runtime-settings-path"); add(app + "/runtime-settings.ini");
@@ -595,10 +540,10 @@ int main(int argc, char** argv) {
         // native7: two helper threads for the scaler's per-frame layer pass
         // (upstream sizes this from hardware_concurrency, which is 0 here).
         setenv("NDS_GPU2D_ADAPTIVE_WORKERS", "2", 0);
-        std::printf("[mph-nx] game code: native (USA Rev 1)\n");
+        std::printf("[sonicrush-nx] game code: native (ASCE)\n");
 #else
         add("--execution-model"); add(flat ? "performance" : "faithful");
-        std::printf("[mph-nx] game code: %s\n", flat ? "flat (performance)" : "accurate (faithful)");
+        std::printf("[sonicrush-nx] game code: %s\n", flat ? "flat (performance)" : "accurate (faithful)");
 #endif
         // Test10: the upstream diagnostics (performance JSON, sampled
         // attribution, coverage manifest) cost several percent of the
@@ -609,7 +554,7 @@ int main(int argc, char** argv) {
             setenv("NDS_PROFILE_DISPATCH", "1009", 1);
         }
         add("--diagnostics"); add(diagnostics ? "on" : "off");
-        std::printf("[mph-nx] diagnostics: %s\n", diagnostics ? "on" : "off");
+        std::printf("[sonicrush-nx] diagnostics: %s\n", diagnostics ? "on" : "off");
     }
     add("--no-coverage-manifest");
     add("--diagnostics-dir"); add(diag);
@@ -634,7 +579,7 @@ int main(int argc, char** argv) {
     add("--adaptive-widescreen"); add("none");
 
     std::vector<char*> cargv;
-    std::printf("[mph-nx] args:");
+    std::printf("[sonicrush-nx] args:");
     for (auto& s : args) {
         cargv.push_back(const_cast<char*>(s.c_str()));
         std::printf(" %s", s.c_str());
@@ -659,7 +604,7 @@ int main(int argc, char** argv) {
     threadWaitForExit(&g_prof);
     threadClose(&g_prof);
 
-    std::printf("[mph-nx] runner returned %d\n", rc);
+    std::printf("[sonicrush-nx] runner returned %d\n", rc);
     g_heartbeat_run.store(false);
     threadWaitForExit(&g_heartbeat);
     threadClose(&g_heartbeat);
