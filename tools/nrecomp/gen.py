@@ -539,6 +539,7 @@ class FuncGen:
         self.w('void %s(uint32_t entry) {' % self.name)
         self.w('    const uint32_t _thumb = %d; (void)_thumb;' % (1 if f.thumb else 0))
         self.w('    NR_ENTER();')
+        self.w('    NR_FENTRY(%s);' % h32(f.entry | (1 if f.thumb else 0)))
         self.w('    NR_LOCALS();')
         self.w('    uint32_t _sv, _sc; (void)_sv; (void)_sc;')
         # A call to the function's own entry address is a normal entry.

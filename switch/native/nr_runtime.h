@@ -133,6 +133,13 @@ static inline void NR_WR8(uint32_t a, uint32_t v) {
 /* Host stack guard: guest recursion runs on the host stack. */
 extern char* nr_stack_limit;
 void nr_stack_overflow(void);
+// Host debug (SRNX_FENTRY builds): the current function's address, for NR_WATCH.
+#ifdef SRNX_FENTRY
+void nr_fentry(uint32_t pc);
+#define NR_FENTRY(pc) nr_fentry(pc)
+#else
+#define NR_FENTRY(pc) ((void)0)
+#endif
 #define NR_ENTER() do { if (__builtin_expect((char*)__builtin_frame_address(0) < nr_stack_limit, 0)) nr_stack_overflow(); } while (0)
 
 /* Host debug: NR_CALLTRACE builds log every native function entry

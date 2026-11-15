@@ -48,6 +48,7 @@ add_library(mphnx_native_game STATIC ${_native_units})
 target_include_directories(mphnx_native_game PRIVATE "${_nat}" "${MPHNX_NATIVE_DIR}"
     "${NDSRECOMP_ROOT}/external/arm-recomp-core/common")
 target_compile_options(mphnx_native_game PRIVATE -O1 -g0 -w -fno-strict-aliasing)
+target_compile_definitions(mphnx_native_game PRIVATE SRNX_FENTRY=1)
 # Host debug: function-entry log (NR_CALLTRACE_FROM decides when it prints).
 target_compile_definitions(mphnx_native_game PRIVATE NR_CALLTRACE=1)
 target_sources(nds_runner PRIVATE "${_nat}/nr_runtime.cpp" "${_nat}/nr_runtime7.cpp" "${_nat}/nr_coro.c"

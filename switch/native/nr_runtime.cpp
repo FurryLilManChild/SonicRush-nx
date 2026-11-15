@@ -64,6 +64,9 @@ enum { NR_STAT_SERVICE, NR_STAT_YIELD, NR_STAT_IRQ, NR_STAT_DYN, NR_STAT_DYN_MIS
 static uint32_t g_ov_lo = 0xFFFFFFFFu, g_ov_hi = 0;
 static int g_ov_resident[64];          // per overlay: 1 resident, 0 not, -1 unknown
 static uint32_t g_ov_dirty = 1;
+#ifdef NR_CALLTRACE
+static uint32_t g_nr_cur_fn = 0, g_watch_lo = 0, g_watch_hi = 0;   // host debug (NR_WATCH)
+#endif
 // Bus-side RAM writes (DMA, card transfers, slow-path stores) bump this; the
 // native fast path does not, so a change means something else wrote RAM.
 extern uint64_t g_coverage_write_epoch;
@@ -201,12 +204,44 @@ extern "C" void nr_remap(void) {
     // resident overlay set stale (an overlay load is a store into this range).
     for (uint32_t a = g_ov_lo & ~0xFFFu; a < g_ov_hi; a += 4096u)
         if (a - 0x02000000u < 0x01000000u) nr_wr_tab[a >> 12] = 0;
+#ifdef NR_CALLTRACE
+    if (const char* w = std::getenv("NR_WATCH")) {
+        g_watch_lo = (uint32_t)std::strtoul(w, nullptr, 16);
+        const char* d = std::strchr(w, '-');
+        g_watch_hi = d ? (uint32_t)std::strtoul(d + 1, nullptr, 16) : g_watch_lo + 4;
+        for (uint32_t a = g_watch_lo & ~0xFFFu; a < g_watch_hi; a += 4096u) nr_wr_tab[a >> 12] = 0;
+    }
+#endif
     g_ov_dirty = 1;
 }
 
 extern "C" uint32_t nr_io_rd32(uint32_t a) { ++g_nr_stats[NR_STAT_IO]; return bus_read_u32_slow(a); }
 extern "C" uint32_t nr_io_rd16(uint32_t a) { ++g_nr_stats[NR_STAT_IO]; return bus_read_u16_slow(a); }
 extern "C" uint32_t nr_io_rd8(uint32_t a) { ++g_nr_stats[NR_STAT_IO]; return bus_read_u8_slow(a); }
+#ifdef NR_CALLTRACE
+// Host debug: NR_WATCH=lo-hi logs the function storing into [lo, hi) (pages
+// are taken off the fast store table so every store comes through here).
+static void watch_store(uint32_t a, uint32_t v, int bytes) {
+    if (a < g_watch_lo || a >= g_watch_hi) return;
+    static long long all_from = -2; static unsigned all_n = 0;
+    if (all_from == -2) { const char* e = std::getenv("NR_WATCH_FROM"); all_from = e ? std::atoll(e) : -1; }
+    if (all_from >= 0) {
+        if ((long long)g_runtime_cycles < all_from || all_n >= 400) return;
+        ++all_n;
+        std::fprintf(stderr, "[watch] fn %08X stores %d bytes at %08X = %08X (cyc %llu)\n",
+                     g_nr_cur_fn, bytes, a, v, (unsigned long long)g_runtime_cycles);
+        return;
+    }
+    static std::vector<uint64_t> seen;
+    const uint64_t key = ((uint64_t)g_nr_cur_fn << 32) | (uint32_t)bytes;
+    for (uint64_t k : seen) if (k == key) return;
+    if (seen.size() < 256) seen.push_back(key);
+    std::fprintf(stderr, "[watch] fn %08X stores %d bytes at %08X = %08X (cyc %llu)\n",
+                 g_nr_cur_fn, bytes, a, v, (unsigned long long)g_runtime_cycles);
+}
+#else
+static inline void watch_store(uint32_t, uint32_t, int) {}
+#endif
 static inline void note_store(uint32_t a) { if (a >= g_ov_lo && a < g_ov_hi) g_ov_dirty = 1; }
 // A store that starts an immediate DMA stalls the CPU until the DMA is done
 // (the hardware gives the bus to the DMA). Hand the slice back right here so
@@ -219,9 +254,9 @@ static inline void io_stall_check_at(uint32_t a) {
     while (nds_dma_cpu_stalled(0)) { nr_yield(); g_nds_unwinding = 0; }
 }
 #define io_stall_check() io_stall_check_at(a)
-extern "C" void nr_io_wr32(uint32_t a, uint32_t v) { ++g_nr_stats[NR_STAT_IO]; note_store(a); bus_write_u32_slow(a, v); io_stall_check(); }
-extern "C" void nr_io_wr16(uint32_t a, uint32_t v) { ++g_nr_stats[NR_STAT_IO]; note_store(a); bus_write_u16_slow(a, (uint16_t)v); io_stall_check(); }
-extern "C" void nr_io_wr8(uint32_t a, uint32_t v) { ++g_nr_stats[NR_STAT_IO]; note_store(a); bus_write_u8_slow(a, (uint8_t)v); io_stall_check(); }
+extern "C" void nr_io_wr32(uint32_t a, uint32_t v) { ++g_nr_stats[NR_STAT_IO]; note_store(a); watch_store(a, v, 4); bus_write_u32_slow(a, v); io_stall_check(); }
+extern "C" void nr_io_wr16(uint32_t a, uint32_t v) { ++g_nr_stats[NR_STAT_IO]; note_store(a); watch_store(a, v, 2); bus_write_u16_slow(a, (uint16_t)v); io_stall_check(); }
+extern "C" void nr_io_wr8(uint32_t a, uint32_t v) { ++g_nr_stats[NR_STAT_IO]; note_store(a); watch_store(a, v, 1); bus_write_u8_slow(a, (uint8_t)v); io_stall_check(); }
 
 // ---------------------------------------------------------------------------
 // Coroutine: the native ARM9 runs on its own stack
@@ -952,6 +987,7 @@ extern "C" void nr_install(void) {
 // Host debug: NR_CALLTRACE_FROM=cycles prints function entries (thread modes
 // only) once the ARM9 clock passes that point.
 extern "C" void nr_fentry(uint32_t pc) {
+    g_nr_cur_fn = pc;
     static long long from = -2;
     if (from == -2) { const char* e = std::getenv("NR_CALLTRACE_FROM"); from = e ? std::atoll(e) : -1; }
     if (from < 0 || (long long)g_runtime_cycles < from) return;

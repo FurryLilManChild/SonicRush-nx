@@ -26,6 +26,10 @@ extern bool g_nx_dma_block;
 extern void (*g_nx_host_round_hook)(uint64_t arm9_cycles);
 
 void nds_set_key_mask(uint32_t mask);   // io.cpp
+const uint8_t* nds_vram_oam_live();     // vram.cpp
+uint32_t nds_vram_read_bg(int engine, uint32_t addr, uint32_t width);
+const uint8_t* nds_vram_palette_live();
+uint32_t nds_gpu2d_read(uint32_t addr, uint32_t width);
 extern unsigned long long g_srnx_gx_busy_skips, g_srnx_gx_busy_reads;   // gpu3d.cpp
 extern bool g_srnx_gx_skip;
 
@@ -64,11 +68,14 @@ void gpu2d_stats_at_exit() {
     std::fprintf(stderr, "[dma] video blocks %llu units %llu (bulk %s)\n", g_nx_dma_blocks, g_nx_dma_block_units,
                  g_nx_dma_block ? "on" : "off");
 }
+void dump_words(const char* d);
 void dump_at_exit() {
     gpu2d_stats_at_exit();
     std::fprintf(stderr, "[srnx] 3D busy reads %llu, skips %llu\n", g_srnx_gx_busy_reads, g_srnx_gx_busy_skips);
     shot_at_exit();
-    const char* d = std::getenv("NR_DUMP");
+    if (!std::getenv("NR_DUMP_AT")) dump_words(std::getenv("NR_DUMP"));
+}
+void dump_words(const char* d) {
     if (!d) return;
     std::string s(d);
     size_t p = 0;
@@ -151,13 +158,46 @@ void parse_shots(const char* v) {
 std::string g_ram_prefix;
 std::vector<unsigned long long> g_rams;
 size_t g_next_ram = 0;
+//   NR_POKE16="Mcyc@addr=val,addr=val"   from Mcyc on, keep these halfwords set
+unsigned long long g_poke_from = ~0ull;
+std::vector<std::pair<uint32_t, uint16_t>> g_pokes;
+extern "C" void bus_write_u16_slow(uint32_t addr, uint16_t val);
 void play_hook(uint64_t cyc) {
+    static long long dump_at = -2;
+    if (dump_at == -2) { const char* e = std::getenv("NR_DUMP_AT"); dump_at = e ? std::atoll(e) * 1000000ll : -1; }
+    if (dump_at >= 0 && (long long)cyc >= dump_at) { dump_words(std::getenv("NR_DUMP")); dump_at = -1; }
+    if (cyc >= g_poke_from)
+        for (const auto& pk : g_pokes)
+            if ((bus_read_u32_slow(pk.first & ~3u) >> ((pk.first & 2u) * 8u) & 0xFFFFu) != pk.second)
+                bus_write_u16_slow(pk.first, pk.second);
     while (g_next_ram < g_rams.size() && cyc >= g_rams[g_next_ram]) {
         const std::string f = g_ram_prefix + "-" + std::to_string(g_rams[g_next_ram] / 1000000ull) + ".bin";
         if (std::FILE* o = std::fopen(f.c_str(), "wb")) {
             std::vector<uint32_t> buf(0x100000);
             for (uint32_t i = 0; i < 0x100000; ++i) buf[i] = bus_read_u32_slow(0x02000000u + 4u * i);
             std::fwrite(buf.data(), 4, buf.size(), o);
+            std::fclose(o);
+        }
+        const std::string fo = g_ram_prefix + "-" + std::to_string(g_rams[g_next_ram] / 1000000ull) + ".oam";
+        if (std::FILE* o = std::fopen(fo.c_str(), "wb")) {
+            if (const uint8_t* oam = nds_vram_oam_live()) std::fwrite(oam, 1, 0x800, o);
+            std::fclose(o);
+        }
+        // ARM9-view video state: BG space of both engines, palettes, 2D registers.
+        const std::string stem = g_ram_prefix + "-" + std::to_string(g_rams[g_next_ram] / 1000000ull);
+        for (int eng = 0; eng < 2; ++eng)
+            if (std::FILE* o = std::fopen((stem + (eng ? ".bgb" : ".bga")).c_str(), "wb")) {
+                const uint32_t n = eng ? 0x20000u : 0x80000u;
+                for (uint32_t a = 0; a < n; a += 4) { uint32_t w = nds_vram_read_bg(eng, a, 4); std::fwrite(&w, 4, 1, o); }
+                std::fclose(o);
+            }
+        if (std::FILE* o = std::fopen((stem + ".pal").c_str(), "wb")) {
+            if (const uint8_t* pal = nds_vram_palette_live()) std::fwrite(pal, 1, 0x800, o);
+            std::fclose(o);
+        }
+        if (std::FILE* o = std::fopen((stem + ".regs").c_str(), "wb")) {
+            for (uint32_t base : {0x04000000u, 0x04001000u})
+                for (uint32_t a = base; a < base + 0x70u; a += 4) { uint32_t w = nds_gpu2d_read(a, 4); std::fwrite(&w, 4, 1, o); }
             std::fclose(o);
         }
         ++g_next_ram;
@@ -210,6 +250,20 @@ struct Install {
         if (std::getenv("SRNX_NOSKIP")) g_srnx_gx_skip = false;
         parse_input(std::getenv("NR_INPUT"));
         parse_shots(std::getenv("NR_SHOTS"));
+        if (const char* v = std::getenv("NR_POKE16")) {
+            std::string sv(v); const size_t at = sv.find('@');
+            if (at != std::string::npos) {
+                g_poke_from = std::strtoull(sv.substr(0, at).c_str(), nullptr, 0) * 1000000ull;
+                size_t p = at + 1;
+                while (p < sv.size()) {
+                    size_t q = sv.find(',', p); if (q == std::string::npos) q = sv.size();
+                    const std::string it = sv.substr(p, q - p); const size_t eq = it.find('=');
+                    g_pokes.push_back({(uint32_t)std::strtoul(it.substr(0, eq).c_str(), nullptr, 16),
+                                       (uint16_t)std::strtoul(it.substr(eq + 1).c_str(), nullptr, 0)});
+                    p = q + 1;
+                }
+            }
+        }
         if (const char* v = std::getenv("NR_RAMDUMP")) {
             std::string sv(v); const size_t at = sv.find('@');
             if (at != std::string::npos) {
@@ -221,7 +275,7 @@ struct Install {
                 }
             }
         }
-        if (!g_save_step.done || !g_load_step.done || !g_presses.empty() || !g_shots.empty() || !g_rams.empty())
+        if (!g_save_step.done || !g_load_step.done || !g_presses.empty() || !g_shots.empty() || !g_rams.empty() || !g_pokes.empty() || std::getenv("NR_DUMP_AT"))
             g_nx_host_round_hook = round_hook;
     }
 } g_install;
