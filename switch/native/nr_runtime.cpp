@@ -65,7 +65,7 @@ static uint32_t g_ov_lo = 0xFFFFFFFFu, g_ov_hi = 0;
 static int g_ov_resident[64];          // per overlay: 1 resident, 0 not, -1 unknown
 static uint32_t g_ov_dirty = 1;
 #ifdef NR_CALLTRACE
-static uint32_t g_nr_cur_fn = 0, g_watch_lo = 0, g_watch_hi = 0;   // host debug (NR_WATCH)
+static uint32_t g_nr_cur_fn = 0, g_nr_cur_lr = 0, g_watch_lo = 0, g_watch_hi = 0;   // host debug (NR_WATCH)
 #endif
 // Bus-side RAM writes (DMA, card transfers, slow-path stores) bump this; the
 // native fast path does not, so a change means something else wrote RAM.
@@ -226,18 +226,19 @@ static void watch_store(uint32_t a, uint32_t v, int bytes) {
     static long long all_from = -2; static unsigned all_n = 0;
     if (all_from == -2) { const char* e = std::getenv("NR_WATCH_FROM"); all_from = e ? std::atoll(e) : -1; }
     if (all_from >= 0) {
-        if ((long long)g_runtime_cycles < all_from || all_n >= 400) return;
+        static unsigned all_max = 0; if (!all_max) { const char* m = std::getenv("NR_WATCH_MAX"); all_max = m ? (unsigned)std::atoi(m) : 400u; }
+        if ((long long)g_runtime_cycles < all_from || all_n >= all_max) return;
         ++all_n;
-        std::fprintf(stderr, "[watch] fn %08X stores %d bytes at %08X = %08X (cyc %llu)\n",
-                     g_nr_cur_fn, bytes, a, v, (unsigned long long)g_runtime_cycles);
+        std::fprintf(stderr, "[watch] fn %08X lr %08X stores %d bytes at %08X = %08X (cyc %llu)\n",
+                     g_nr_cur_fn, g_nr_cur_lr, bytes, a, v, (unsigned long long)g_runtime_cycles);
         return;
     }
     static std::vector<uint64_t> seen;
-    const uint64_t key = ((uint64_t)g_nr_cur_fn << 32) | (uint32_t)bytes;
+    const uint64_t key = ((uint64_t)g_nr_cur_fn << 32) ^ g_nr_cur_lr ^ (uint32_t)bytes;
     for (uint64_t k : seen) if (k == key) return;
     if (seen.size() < 256) seen.push_back(key);
-    std::fprintf(stderr, "[watch] fn %08X stores %d bytes at %08X = %08X (cyc %llu)\n",
-                 g_nr_cur_fn, bytes, a, v, (unsigned long long)g_runtime_cycles);
+    std::fprintf(stderr, "[watch] fn %08X lr %08X stores %d bytes at %08X = %08X (cyc %llu)\n",
+                 g_nr_cur_fn, g_nr_cur_lr, bytes, a, v, (unsigned long long)g_runtime_cycles);
 }
 #else
 static inline void watch_store(uint32_t, uint32_t, int) {}
@@ -988,6 +989,7 @@ extern "C" void nr_install(void) {
 // only) once the ARM9 clock passes that point.
 extern "C" void nr_fentry(uint32_t pc) {
     g_nr_cur_fn = pc;
+    g_nr_cur_lr = g_cpu.R[14];
     static long long from = -2;
     if (from == -2) { const char* e = std::getenv("NR_CALLTRACE_FROM"); from = e ? std::atoll(e) : -1; }
     if (from < 0 || (long long)g_runtime_cycles < from) return;

@@ -28,8 +28,12 @@ extern void (*g_nx_host_round_hook)(uint64_t arm9_cycles);
 void nds_set_key_mask(uint32_t mask);   // io.cpp
 const uint8_t* nds_vram_oam_live();     // vram.cpp
 uint32_t nds_vram_read_bg(int engine, uint32_t addr, uint32_t width);
+uint32_t nds_vram_read_obj(int engine, uint32_t addr, uint32_t width);
+uint32_t nds_vram_read_bg_extpal(int engine, uint32_t addr, uint32_t width);
+uint32_t nds_vram_read_obj_extpal(int engine, uint32_t addr, uint32_t width);
 const uint8_t* nds_vram_palette_live();
 uint32_t nds_gpu2d_read(uint32_t addr, uint32_t width);
+void nds_gpu2d_debug_regs(int e, uint16_t bgx[4], uint16_t bgy[4], int32_t refx[2], int32_t refy[2], int16_t pabcd[8]);
 extern unsigned long long g_srnx_gx_busy_skips, g_srnx_gx_busy_reads;   // gpu3d.cpp
 extern bool g_srnx_gx_skip;
 
@@ -191,6 +195,18 @@ void play_hook(uint64_t cyc) {
                 for (uint32_t a = 0; a < n; a += 4) { uint32_t w = nds_vram_read_bg(eng, a, 4); std::fwrite(&w, 4, 1, o); }
                 std::fclose(o);
             }
+        for (int eng = 0; eng < 2; ++eng) {
+            if (std::FILE* o = std::fopen((stem + (eng ? ".objb" : ".obja")).c_str(), "wb")) {
+                const uint32_t n = eng ? 0x20000u : 0x40000u;
+                for (uint32_t a = 0; a < n; a += 4) { uint32_t w = nds_vram_read_obj(eng, a, 4); std::fwrite(&w, 4, 1, o); }
+                std::fclose(o);
+            }
+            if (std::FILE* o = std::fopen((stem + (eng ? ".xpb" : ".xpa")).c_str(), "wb")) {
+                for (uint32_t a = 0; a < 0x8000u; a += 4) { uint32_t w = nds_vram_read_bg_extpal(eng, a, 4); std::fwrite(&w, 4, 1, o); }
+                for (uint32_t a = 0; a < 0x2000u; a += 4) { uint32_t w = nds_vram_read_obj_extpal(eng, a, 4); std::fwrite(&w, 4, 1, o); }
+                std::fclose(o);
+            }
+        }
         if (std::FILE* o = std::fopen((stem + ".pal").c_str(), "wb")) {
             if (const uint8_t* pal = nds_vram_palette_live()) std::fwrite(pal, 1, 0x800, o);
             std::fclose(o);
@@ -198,6 +214,11 @@ void play_hook(uint64_t cyc) {
         if (std::FILE* o = std::fopen((stem + ".regs").c_str(), "wb")) {
             for (uint32_t base : {0x04000000u, 0x04001000u})
                 for (uint32_t a = base; a < base + 0x70u; a += 4) { uint32_t w = nds_gpu2d_read(a, 4); std::fwrite(&w, 4, 1, o); }
+            for (int e = 0; e < 2; ++e) {   // latched scroll/affine state: bgx[4] bgy[4] refx[2] refy[2] pabcd[8]
+                uint16_t bx[4], by[4]; int32_t rx[2], ry[2]; int16_t pm[8];
+                nds_gpu2d_debug_regs(e, bx, by, rx, ry, pm);
+                std::fwrite(bx, 2, 4, o); std::fwrite(by, 2, 4, o); std::fwrite(rx, 4, 2, o); std::fwrite(ry, 4, 2, o); std::fwrite(pm, 2, 8, o);
+            }
             std::fclose(o);
         }
         ++g_next_ram;
