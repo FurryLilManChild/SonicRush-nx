@@ -525,7 +525,7 @@ int main(int argc, char** argv) {
     // cpu_core=1 selects the flat-AOT ARM9 code, otherwise faithful.
     {
         bool flat = true, diagnostics = false;
-        if (FILE* f = fopen((app + "/mph-nx-settings.ini").c_str(), "r")) {
+        if (FILE* f = fopen((app + "/sonicrush-nx-settings.ini").c_str(), "r")) {
             char line[160];
             while (fgets(line, sizeof line, f)) {
                 if (strncmp(line, "cpu_core=", 9) == 0) flat = atoi(line + 9) == 1;
@@ -547,7 +547,7 @@ int main(int argc, char** argv) {
 #endif
         // Test10: the upstream diagnostics (performance JSON, sampled
         // attribution, coverage manifest) cost several percent of the
-        // emulation thread. Off unless diagnostics=1 in mph-nx-settings.ini;
+        // emulation thread. Off unless diagnostics=1 in sonicrush-nx-settings.ini;
         // the MPH-nx speed line in the log is always written.
         if (diagnostics) {
             setenv("NDS_PROFILE_EMU", "31", 1);

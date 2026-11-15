@@ -26,6 +26,8 @@ extern bool g_nx_dma_block;
 extern void (*g_nx_host_round_hook)(uint64_t arm9_cycles);
 
 void nds_set_key_mask(uint32_t mask);   // io.cpp
+extern unsigned long long g_srnx_gx_busy_skips, g_srnx_gx_busy_reads;   // gpu3d.cpp
+extern bool g_srnx_gx_skip;
 
 namespace {
 void write_shot(const char* f) {
@@ -64,6 +66,7 @@ void gpu2d_stats_at_exit() {
 }
 void dump_at_exit() {
     gpu2d_stats_at_exit();
+    std::fprintf(stderr, "[srnx] 3D busy reads %llu, skips %llu\n", g_srnx_gx_busy_reads, g_srnx_gx_busy_skips);
     shot_at_exit();
     const char* d = std::getenv("NR_DUMP");
     if (!d) return;
@@ -204,6 +207,7 @@ struct Install {
         std::atexit(dump_at_exit);
         g_save_step = parse_step(std::getenv("NR_STATE_SAVE"));
         g_load_step = parse_step(std::getenv("NR_STATE_LOAD"));
+        if (std::getenv("SRNX_NOSKIP")) g_srnx_gx_skip = false;
         parse_input(std::getenv("NR_INPUT"));
         parse_shots(std::getenv("NR_SHOTS"));
         if (const char* v = std::getenv("NR_RAMDUMP")) {
