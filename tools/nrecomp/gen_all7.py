@@ -1,0 +1,178 @@
+"""Generate the native C sources for the ARM7 program (the DS's second CPU).
+
+The ARM7 binary is NitroSDK's system and sound program. Its startup code copies
+two sections, one into WRAM and one into main RAM, then jumps into WRAM; every
+function is generated at the address it runs from. ARMv4T rules apply (see
+decode.ARCH).
+
+Output (never committed: it is derived from the game):
+  nr7_NN.c       functions
+  nr7_funcs.h    prototypes
+  nr7_tables.c   entry table
+
+Extra roots: NR7_EXTRA_ROOTS names a file of "ADDR [thumb]" lines (runtime
+misses, or the entry lists of the old ARM7 engine). Keep it out of the repo.
+"""
+import os, re, sys
+import decode
+decode.ARCH = 'v4t'
+from analyze import Analyzer, Image
+from gen import FuncGen
+from rom import Rom
+
+UNIT_BYTES = 4 * 1024 * 1024
+
+
+def put(out, name, text, stale):
+    path = os.path.join(out, name)
+    stale.discard(name)
+    if os.path.exists(path) and open(path).read() == text:
+        return
+    open(path, 'w').write(text)
+
+
+class Buf:
+    """Collects a file's text; writes it only if it differs from what is there."""
+    def __init__(self, out, name, stale):
+        self.out, self.name, self.stale, self.parts = out, name, stale, []
+    def write(self, s): self.parts.append(s)
+    def __enter__(self): return self
+    def __exit__(self, *a): put(self.out, self.name, ''.join(self.parts), self.stale)
+
+
+def cname(f):
+    return 'S7_%08X_%s' % (f.entry, 't' if f.thumb else 'a')
+
+
+def load_roots(path):
+    roots = []
+    if not path or not os.path.exists(path):
+        return roots
+    text = open(path).read()
+    if path.endswith('.toml'):
+        for a, m in re.findall(r'addr = (0x[0-9a-fA-F]+)\s*\nmode = "(\w+)"', text):
+            roots.append((int(a, 16), m == 'thumb'))
+        return roots
+    for line in text.splitlines():
+        p = line.split('#')[0].split()
+        if p:
+            roots.append((int(p[0], 16) & ~1, any(x.startswith('t') for x in p[1:])))
+    return roots
+
+
+def analyze7(rom_path):
+    r = Rom(rom_path)
+    segs = r.arm7_segments()
+    img = Image(segs)
+    an = Analyzer(img)
+    an.add_entry(r.arm7_entry, False, 'entry')
+    # crt0 ends with BX to the program entry: LDR r1,[pc,#x] ; LDR lr,[...] ; BX r1
+    crt0 = segs[0]
+    for o in range(0, len(crt0[2]) - 12, 4):
+        w = img.r32(crt0[1] + o + 8)
+        if w == 0xE12FFF11:  # BX r1
+            ld = img.r32(crt0[1] + o)
+            if ld is not None and (ld & 0xFFFFF000) == 0xE59F1000:
+                tgt = img.r32(crt0[1] + o + 8 + (ld & 0xFFF))
+                if tgt and img.seg(tgt & ~1):
+                    an.add_entry(tgt & ~1, bool(tgt & 1), 'entry')
+            break
+    # BIOS call wrappers (SonicRush-nx): "SWI n ; BX lr" stubs, Thumb and ARM.
+    # Games reach them through pointers or from code found later, so seed them
+    # all up front instead of one boot-test miss at a time.
+    for _, base, b in segs[1:]:
+        for o in range(0, len(b) - 4, 2):
+            h0 = b[o] | (b[o + 1] << 8); h1 = b[o + 2] | (b[o + 3] << 8)
+            if (h0 & 0xFF00) == 0xDF00 and h1 == 0x4770:
+                an.add_entry(base + o, True, 'swi-stub')
+        for o in range(0, len(b) - 8, 4):
+            w0 = int.from_bytes(b[o:o + 4], 'little'); w1 = int.from_bytes(b[o + 4:o + 8], 'little')
+            if (w0 & 0xFF000000) == 0xEF000000 and w1 == 0xE12FFF1E:
+                an.add_entry(base + o, False, 'swi-stub')
+    an.run()
+    for _ in range(3):
+        if not an.pointer_scan(): break
+        an.run()
+    # Extra roots, only where nothing decoded yet: the old engine's lists hold
+    # block starts inside functions, and as roots those would split (and
+    # duplicate) the function around them.
+    lo_hi = [(a, a + len(b)) for _, a, b in segs]
+    paths = [p for p in os.environ.get('NR7_EXTRA_ROOTS', '').split(':') if p]
+    roots = [(a, th) for p in paths for a, th in load_roots(p)
+             if any(lo <= a < hi for lo, hi in lo_hi)]
+    nroots = 0
+    for _ in range(4):
+        new = [(a, th) for a, th in roots if a not in an.code_bytes and (a, th) not in an.funcs]
+        if not new: break
+        for a, th in new:
+            an.add_entry(a, th, 'runtime'); nroots += 1
+        an.run()
+        an.pointer_scan(); an.run()
+    return an, nroots
+
+
+def main(rom, out):
+    os.makedirs(out, exist_ok=True)
+    # Files are rewritten only when their content changes, so the build
+    # recompiles only units whose code changed; stale ones are removed at the end.
+    stale = {f for f in os.listdir(out)
+             if f.startswith('nr7_') and (f.endswith('.c') or f.endswith('.h'))}
+    an, nroots = analyze7(rom)
+    funcs = {k: f for k, f in an.funcs.items() if not f.bad}
+    names = {k: cname(f) for k, f in funcs.items()}
+
+    def resolve(target, thumb):
+        k = (target & ~1, bool(thumb))
+        if k in names: return ('direct', names[k])
+        return ('dyn', None)
+
+    units, cur, size, n = [], [], 0, 0
+    protos, entries = [], []
+    for k in sorted(funcs):
+        f = funcs[k]
+        g = FuncGen(f, names[k], resolve, set(), arch='v4t')
+        code = g.generate()
+        protos.append('void %s(uint32_t entry);' % names[k])
+        for a in sorted(g.labels | {f.entry}):
+            entries.append(((a | (1 if f.thumb else 0)), names[k], a == f.entry))
+        cur.append(code); size += len(code)
+        if size >= UNIT_BYTES:
+            units.append(('nr7_%02d.c' % n, cur)); n += 1; cur, size = [], 0
+    if cur:
+        units.append(('nr7_%02d.c' % n, cur))
+    best = {}
+    for key, name, own in entries:
+        if key not in best or (own and not best[key][1]):
+            best[key] = (name, own)
+    rows = sorted((k, v[0]) for k, v in best.items())
+
+    hdr = ['/* generated by tools/nrecomp/gen_all7.py; derived from the game, do not commit */',
+           '#pragma once', '#include "nr_runtime7.h"'] + protos
+    put(out, 'nr7_funcs.h', '\n'.join(hdr) + '\n', stale)
+    for fname, codes in units:
+        with Buf(out, fname, stale) as fh:
+            fh.write('/* generated by tools/nrecomp/gen_all7.py; do not commit */\n')
+            fh.write('#include "nr7_funcs.h"\n')
+            fh.write('#pragma GCC diagnostic ignored "-Wunused-label"\n')
+            fh.write('#pragma GCC diagnostic ignored "-Wunused-variable"\n')
+            fh.write('#pragma GCC diagnostic ignored "-Wunused-but-set-variable"\n\n')
+            fh.write('\n\n'.join(codes))
+            fh.write('\n')
+    with Buf(out, 'nr7_tables.c', stale) as fh:
+        fh.write('/* generated; do not commit */\n#include "nr7_funcs.h"\n\n')
+        fh.write('const NrEntry nr7_tab[] = {\n')
+        for k, name in rows:
+            fh.write('  {0x%08Xu, %s},\n' % (k, name))
+        fh.write('};\nconst uint32_t nr7_tab_count = %d;\n' % len(rows))
+    bad = [f for f in an.funcs.values() if f.bad]
+    print('arm7    %5d functions %7d instructions %6d entries (%d roots, %d failed)' % (
+        len(funcs), sum(len(f.insns) for f in funcs.values()), len(rows), nroots, len(bad)))
+    for f in bad[:10]:
+        print('  failed %08x %s %s (%s)' % (f.entry, 'T' if f.thumb else 'A', f.bad, f.owner))
+    for f in stale:
+        os.remove(os.path.join(out, f))
+    print('%d source units' % len(units))
+
+
+if __name__ == '__main__':
+    main(sys.argv[1], sys.argv[2])
