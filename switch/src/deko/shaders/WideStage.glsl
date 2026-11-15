@@ -83,9 +83,16 @@ bool bg_pixel(uint bg, int x, int y, out uint col)
     return true;
 }
 
-const ivec2 kSz[12] = ivec2[12](ivec2(8, 8), ivec2(16, 16), ivec2(32, 32), ivec2(64, 64),
-                                ivec2(16, 8), ivec2(32, 8), ivec2(32, 16), ivec2(64, 32),
-                                ivec2(8, 16), ivec2(8, 32), ivec2(16, 32), ivec2(32, 64));
+// OBJ size by shape and size bits, computed (no arrays: arrays indexed at run
+// time go to per-thread local memory)
+ivec2 obj_size(uint shape, uint size)
+{
+    int big = 8 << int(size);                                   // square: 8,16,32,64
+    if (shape == 0u) return ivec2(big, big);
+    int l = size == 0u ? 16 : size == 1u ? 32 : size == 2u ? 32 : 64;
+    int s = size == 0u ? 8 : size == 1u ? 8 : size == 2u ? 16 : 32;
+    return shape == 1u ? ivec2(l, s) : ivec2(s, l);
+}
 
 bool spr_pixel(uint first, uint count, int x, int y, out uint col, out int prio)
 {
@@ -106,7 +113,7 @@ bool spr_pixel(uint first, uint count, int x, int y, out uint col, out int prio)
         if (((a0 >> 10) & 3u) == 3u) continue;
         uint shape = (a0 >> 14) & 3u;
         if (shape == 3u) continue;
-        ivec2 sz = kSz[shape * 4u + ((a1 >> 14) & 3u)];
+        ivec2 sz = obj_size(shape, (a1 >> 14) & 3u);
         int xx = x - sx, yy = y - sy;
         if (xx < 0 || yy < 0 || xx >= sz.x || yy >= sz.y) continue;
         if (!rs && (a1 & 0x1000u) != 0u) xx = sz.x - 1 - xx;
@@ -153,12 +160,11 @@ void main()
         uint col = 0u;
         int bprio = 4;
         bool have = false;
-        uint ord[3] = uint[3](Order0, Order1, Order2);
-        for (int i = 2; i >= 0; --i) {
-            uint bg = ord[i];
+        for (int i = 2; i >= 0 && !have; --i) {               // front to back
+            uint bg = i == 2 ? Order2 : i == 1 ? Order1 : Order0;
             if (bg > 3u || ((DispCnt >> (8u + bg)) & 1u) == 0u) continue;
             uint cc;
-            if (bg_pixel(bg, x, y, cc)) { col = cc; bprio = int(bgcnt(bg) & 3u); have = true; break; }
+            if (bg_pixel(bg, x, y, cc)) { col = cc; bprio = int(bgcnt(bg) & 3u); have = true; }
         }
         uint sc; int sp;
         if (((DispCnt >> 12) & 1u) != 0u && spr_pixel(0u, NSpr, x, y, sc, sp) && sp <= bprio) { col = sc; have = true; }

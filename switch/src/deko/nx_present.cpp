@@ -384,6 +384,10 @@ void present_now(const NxPresentFrame& f)
         dk::ImageView fb_view{g_fb[slot]};
         dk::ImageView wide_view{g_wide[slot]};
         const bool gpu = g_wide_shader_ok;
+        static unsigned wide_frames = 0;
+        if (wide_frames++ < 2)
+            std::fprintf(stderr, "[present] stage view frame %u: %dx%d, %s drawing\n", wide_frames, wp.view_w, wp.view_h,
+                         gpu ? "GPU" : "CPU");
         if (gpu) {
             uint8_t* snap = static_cast<uint8_t*>(g_wsnap_mem.getCpuAddr()) + g_wsnap_off[slot];
             std::memcpy(snap, &wp, sizeof(wp));
@@ -429,7 +433,14 @@ void present_now(const NxPresentFrame& f)
         if (gpu && g_wide_checks > 0) {
             // check the GPU drawing against the CPU drawing of the same snapshot
             --g_wide_checks;
-            g_fence[slot].wait();
+            // never block the presenter for good on a GPU that did not finish
+            if (g_fence[slot].wait(200000000) != DkResult_Success) {
+                std::fprintf(stderr, "[present] stage view: GPU drawing did not finish in 200 ms, switching to CPU drawing\n");
+                g_wide_shader_ok = false;
+                g_wide_checks = 0;
+                g_queue.presentImage(g_swapchain, slot);
+                return;
+            }
             std::vector<uint32_t> ref((size_t)vw * vh);
             srnx_wide_draw_cpu(wp, f.wide_data, ref.data(), vw);
             size_t diff = 0;
