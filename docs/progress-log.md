@@ -1,5 +1,17 @@
 # Progress log (newest first)
 
+## 2026-11-15: switch-test3 result, our own camera (switch-test4)
+
+- switch-test3 (Mark): wide view fine while the game has Sonic on the top screen; once it moves him to the bottom screen the DS screens appear misaligned over the wide view. Cause (from camera data): camera record 0 is the main engine's (3D layer) and follows Sonic; when he drops below the old screen line it moves 272 px below record 1 and the main engine goes to the bottom LCD. The view assumed record 0 = top screen. Also 52-55 fps fell to 18-21 fps with the CPU wide drawing on the game thread.
+- Mark: write our own camera, and zoom in much closer, toward classic 2D Sonic framing (reference: Sonic Mania, 424x240).
+- Sonic's position: [0x0236AC60] (camera target) +0x10 x, +0x14 y, 24.8; stable across a run spanning both screens.
+- Our camera: look-ahead, vertical dead zone, capped follow speed, level clamp. Zoom: Close 424x240 (default, exactly 3x on 720p), Medium 512x288, Far 640x360, Full 825x464.
+- Placement: the DS screen just drawn matches the camera latched two VBlanks back (VBlank hook in gpu3d.cpp); a sparse-grid search settles the last pixel. Host: offset 0 in all 19 checks across the screen switch. Colour conversion matches the DS 2D engine (5 to 6 to 8 bit).
+- HUD sprites come from 0x02032C8C (lr 0x02032D14 into 0x02032D2C); fixed positions in all 10 checks; pinned to view corners and kept out of the DS picture.
+- Drawing on the GPU (shaders/WideStage.glsl), CPU drawing as reference and fallback; the first 3 frames of each stage are compared GPU against CPU in the log.
+- Known limit: large 3D scenery beyond the 256x192 area around Sonic is cut at that edge.
+- switch-test4: NRO sha256 f215c5c1632248b87fcc618a812553115c7c43a47f7e030f6c4a90854a0f0efc; ELF /home/claude/build/elf-switch-test4.elf.
+
 ## 2026-11-15: widescreen sprites and the wide view in the Switch build (not built yet)
 
 - Generator hooks: `tools/nrecomp/hooks/srnx.hooks` (NR_HOOKS) inserts our own C at guest addresses. Sprite clips found and hooked: central routine 0x020329F4 (per sprite), animated routine 0x02032E6C (whole sprite) and 0x02033058 (per part); true positions recorded after the slot allocator (0x02032B40, 0x020330D0). Allocator 0x02036BFC hands out a staging array at block +0x800 (main 0x0208A2D4, sub 0x02088DAC), sorted later into the OAM shadow at +0x000.
