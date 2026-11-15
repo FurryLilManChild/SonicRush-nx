@@ -20,7 +20,9 @@ extern uint32_t g_srnx_spr_overflow;
 
 int srnx_spr_clip(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t mgr);
 int srnx_spr_box(int32_t x0, int32_t x1, int32_t y0, int32_t y1, uint32_t mgr);
-void srnx_spr_record(uint32_t slot, uint32_t x, uint32_t y, uint32_t mgr);
+// Records the sprite and returns the y to put in OAM (pushed off the DS
+// screen when the sprite is only in the wide view).
+uint32_t srnx_spr_record(uint32_t slot, uint32_t x, uint32_t y, uint32_t mgr);
 uint32_t srnx_spr_last(int engine, const SrnxSprite** out);
 uint32_t srnx_spr_frames(int engine);
 uint32_t srnx_spr_mgr(int engine);

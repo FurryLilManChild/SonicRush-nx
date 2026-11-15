@@ -24,6 +24,7 @@ extern bool g_nx_dma_block;
 #include "savestate.h"
 #include "../native/nr_state.h"
 #include "../native/srnx_wide.h"
+#include "../src/srnx_wide_render.h"
 extern void (*g_nx_host_round_hook)(uint64_t arm9_cycles);
 
 void nds_set_key_mask(uint32_t mask);   // io.cpp
@@ -218,7 +219,16 @@ void play_hook(uint64_t cyc) {
                 std::fwrite(sp, sizeof(SrnxSprite), n, o);
             }
             std::fclose(o);
-            srnx_alloc_report();
+            if (srnx_wide_stage_active()) {
+                static uint32_t wide[kSrnxWideMaxW * kSrnxWideMaxH];
+                if (srnx_wide_render(wide, nullptr, nullptr))
+                    if (std::FILE* w = std::fopen((stem + ".wide").c_str(), "wb")) {
+                        std::fwrite(wide, 4, (size_t)g_srnx_wide_w * g_srnx_wide_h, w);
+                        std::fclose(w);
+                    }
+            } else {
+                std::fprintf(stderr, "[srnx] wide view: not a stage\n");
+            }
             std::fprintf(stderr, "[srnx] sprites main %u sub %u frames %u/%u mgr %08X/%08X overflow %u\n",
                          srnx_spr_last(0, &g_spr_tmp), srnx_spr_last(1, &g_spr_tmp),
                          srnx_spr_frames(0), srnx_spr_frames(1), srnx_spr_mgr(0), srnx_spr_mgr(1), g_srnx_spr_overflow);

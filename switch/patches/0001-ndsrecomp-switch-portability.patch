@@ -499,7 +499,7 @@ index 022a1af..8c31a75 100644
  #endif
      if (supported) {
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 7d9d4eb..f5cb007 100644
+index 7d9d4eb..aa91723 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
 @@ -4,6 +4,7 @@
@@ -545,7 +545,23 @@ index 7d9d4eb..f5cb007 100644
  #include "savestate_slots.h"
  #include "spu.h"
  #include "title_patches.h"
-@@ -215,6 +233,104 @@ void observe_top_black_bands(const uint32_t* pixels, uint64_t frame,
+@@ -39,6 +57,15 @@
+ #include "melonds_compute/ComputeHost.h"
+ #endif
+ 
++#if defined(SRNX) && defined(__SWITCH__)
++// SonicRush-nx widescreen (switch/src/srnx_wide_render.cpp, switch/native/srnx_wide.cpp)
++bool srnx_wide_stage_active();
++bool srnx_wide_render(uint32_t* out, const uint32_t* top, const uint32_t* bottom);
++extern int g_srnx_wide_w, g_srnx_wide_h;
++extern "C" int g_srnx_wide;
++extern "C" int g_srnx_wide_l, g_srnx_wide_r, g_srnx_wide_t, g_srnx_wide_b;
++#endif
++
+ namespace {
+ // Written per presented frame by the frontend loop, read from the same
+ // thread by the `frontend_stats` debug command at the debug_pump() safe
+@@ -215,6 +242,104 @@ void observe_top_black_bands(const uint32_t* pixels, uint64_t frame,
  #include "recomp_runtime_ui.h"
  
  #include "frontend_latency.h"
@@ -650,7 +666,7 @@ index 7d9d4eb..f5cb007 100644
  
  namespace {
  
-@@ -768,6 +884,93 @@ void SDLCALL audio_stream_underrun_callback(void* userdata,
+@@ -768,6 +893,93 @@ void SDLCALL audio_stream_underrun_callback(void* userdata,
  #else
  using NdsAudioDevice = SDL_AudioDeviceID;
  
@@ -744,7 +760,7 @@ index 7d9d4eb..f5cb007 100644
  void SDLCALL audio_callback(void* userdata, Uint8* stream, int len) {
      // SDL owns this thread, so it cannot be registered at creation; it
      // registers itself the first time it runs instead. One thread_local test
-@@ -782,6 +985,9 @@ void SDLCALL audio_callback(void* userdata, Uint8* stream, int len) {
+@@ -782,6 +994,9 @@ void SDLCALL audio_callback(void* userdata, Uint8* stream, int len) {
      std::memset(stream, 0, static_cast<size_t>(len));
      if (!queue || len <= 0) return;
      const uint32_t requested = static_cast<uint32_t>(len) / kAudioFrameBytes;
@@ -754,7 +770,7 @@ index 7d9d4eb..f5cb007 100644
      const uint32_t take = std::min(requested, queue->count);
      auto* output = reinterpret_cast<int16_t*>(stream);
      const uint32_t first = std::min(take, kAudioCapacityFrames - queue->read);
-@@ -815,6 +1021,12 @@ bool sdl_init_frontend() {
+@@ -815,6 +1030,12 @@ bool sdl_init_frontend() {
      return SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS |
                      SDL_INIT_GAMECONTROLLER);
  #else
@@ -767,7 +783,7 @@ index 7d9d4eb..f5cb007 100644
      return SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS |
                      SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) == 0;
  #endif
-@@ -1006,10 +1218,34 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
+@@ -1006,10 +1227,34 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
                       bool throttle, uint32_t pace_floor, bool& queue_error,
                       const std::vector<int16_t>* owned_pcm = nullptr) {
      if (!device) return 0;
@@ -804,7 +820,7 @@ index 7d9d4eb..f5cb007 100644
              ? static_cast<uint32_t>(std::min<size_t>(1024,(owned_pcm->size()-pcm_offset)/2u))
              : nds_spu_read_output(samples.data(), 1024);
          if (!frames) break;
-@@ -1017,45 +1253,69 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
+@@ -1017,45 +1262,69 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
              std::copy_n(owned_pcm->data()+pcm_offset,frames*2u,samples.data());
              pcm_offset+=frames*2u;
          }
@@ -821,21 +837,6 @@ index 7d9d4eb..f5cb007 100644
 -                    queue_error = true;
 -                    return audio_queue_count(device, queue);
 -                }
--            }
--#else
--            SDL_LockAudioDevice(device);
--            if (kAudioCapacityFrames - queue.count >= frames) {
--                const uint32_t first = std::min(
--                    frames, kAudioCapacityFrames - queue.write);
--                std::memcpy(queue.samples.data() + queue.write * 2u,
--                            samples.data(), first * kAudioFrameBytes);
--                if (first < frames)
--                    std::memcpy(queue.samples.data(),
--                                samples.data() + first * 2u,
--                                (frames - first) * kAudioFrameBytes);
--                queue.write = (queue.write + frames) % kAudioCapacityFrames;
--                queue.count += frames;
--                pushed = true;
 +#if defined(__SWITCH__) && defined(MPHNX_DEKO3D) && !defined(NDS_HAVE_SDL3)
 +        if (drc && frames > 1) {
 +            s_drc_acc += frames * drc_ratio;
@@ -851,6 +852,21 @@ index 7d9d4eb..f5cb007 100644
 +                    stretched[i * 2 + c] = static_cast<int16_t>(
 +                        samples[j * 2 + c] + (samples[k * 2 + c] - samples[j * 2 + c]) * t);
              }
+-#else
+-            SDL_LockAudioDevice(device);
+-            if (kAudioCapacityFrames - queue.count >= frames) {
+-                const uint32_t first = std::min(
+-                    frames, kAudioCapacityFrames - queue.write);
+-                std::memcpy(queue.samples.data() + queue.write * 2u,
+-                            samples.data(), first * kAudioFrameBytes);
+-                if (first < frames)
+-                    std::memcpy(queue.samples.data(),
+-                                samples.data() + first * 2u,
+-                                (frames - first) * kAudioFrameBytes);
+-                queue.write = (queue.write + frames) % kAudioCapacityFrames;
+-                queue.count += frames;
+-                pushed = true;
+-            }
 -            SDL_UnlockAudioDevice(device);
 +            std::copy_n(stretched.data(), out * 2u, samples.data());
 +            frames = out;
@@ -909,7 +925,7 @@ index 7d9d4eb..f5cb007 100644
      }
      // Audio is the host's real-time clock. Never drop a produced block: if the
      // emulator is faster than the DS cadence, let SDL consume the backlog
-@@ -1066,7 +1326,7 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
+@@ -1066,7 +1335,7 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
      // down while the emulator is running behind, so a slow stretch spends the
      // buffered runway instead of having it slept away.
      uint32_t queued = audio_queue_count(device, queue);
@@ -918,17 +934,19 @@ index 7d9d4eb..f5cb007 100644
          // Spend existing audio pacing slack preparing qualified native code.
          // Guest CPUs remain paused; under load/no slack demand execution wins.
          if (!nds_arm9_native_prepare_idle(1000)) SDL_Delay(1);
-@@ -1185,6 +1445,225 @@ constexpr const char* kRuntimeMouseSensitivityKey =
+@@ -1185,6 +1454,227 @@ constexpr const char* kRuntimeMouseSensitivityKey =
  constexpr const char* kRuntimeResumeKey = "system.resume";
  constexpr const char* kRuntimeQuitKey = "system.quit";
  
 +#if defined(__SWITCH__) && !defined(NDS_HAVE_SDL3)
 +// ---- MPH-nx Switch state shared by presentation, input and the menu ------
-+enum MphnxLayout : int { kNxStacked = 0, kNxBigTop = 1, kNxTopOnly = 2, kNxTopHud = 3 };
++enum MphnxLayout : int { kNxStacked = 0, kNxBigTop = 1, kNxTopOnly = 2, kNxTopHud = 3, kNxWide = 4 };
 +#if defined(SRNX)
-+int g_nx_layout = kNxStacked;  // SonicRush-nx: both screens as one seamless column
++int g_nx_layout = kNxWide;     // SonicRush-nx: one wide view in stages, the column elsewhere
++constexpr int kNxLayoutCount = 5;
 +#else
 +int g_nx_layout = kNxTopHud;   // 0.5.0: first launch starts in Top only + HUD
++constexpr int kNxLayoutCount = 4;
 +#endif
 +bool g_nx_overlay = false;      // tap minus: touch cursor (+ bottom overlay in Top only)
 +bool g_nx_show_speed = false;
@@ -1005,7 +1023,7 @@ index 7d9d4eb..f5cb007 100644
 +#else
 +constexpr const char* kNxSettingsPath = MPHNX_APP_DIR "/mph-nx-settings.ini";
 +#endif
-+const char* const kNxLayoutNames[] = {"Stacked", "Big top, small bottom", "Top only", "Top only + HUD"};
++const char* const kNxLayoutNames[] = {"Stacked", "Big top, small bottom", "Top only", "Top only + HUD", "Widescreen"};
 +// Physical Switch buttons, and the SDL pad names they arrive as (SDL uses
 +// positional Xbox names: Switch B is "Pad A", Switch A is "Pad B").
 +const char* const kNxButtonNames[] = {"None", "A", "B", "X", "Y", "L", "R", "ZL", "ZR",
@@ -1098,7 +1116,7 @@ index 7d9d4eb..f5cb007 100644
 +        const size_t eq = l.find('=');
 +        if (eq == std::string::npos) continue;
 +        const std::string k = l.substr(0, eq), v = l.substr(eq + 1);
-+        if (k == "layout") g_nx_layout = std::clamp(std::atoi(v.c_str()), 0, 3);
++        if (k == "layout") g_nx_layout = std::clamp(std::atoi(v.c_str()), 0, kNxLayoutCount - 1);
 +        else if (k == "show_speed") g_nx_show_speed = std::atoi(v.c_str()) != 0;
 +        else if (k == "fast_loading") g_nx_fast_card = std::atoi(v.c_str()) != 0;
 +        else if (k == "cpu_sync2") g_nx_sync = std::clamp(std::atoi(v.c_str()), 0, 3);
@@ -1144,7 +1162,7 @@ index 7d9d4eb..f5cb007 100644
  struct RuntimeMenuState {
      NdsFrontendOptions* options = nullptr;
      bool* running = nullptr;
-@@ -1235,6 +1714,31 @@ int runtime_menu_get_value(void* context, const RecompRuntimeUiItem* item,
+@@ -1235,6 +1725,31 @@ int runtime_menu_get_value(void* context, const RecompRuntimeUiItem* item,
                             int* value_out) {
      auto* state = static_cast<RuntimeMenuState*>(context);
      if (!state || !state->options || !item || !value_out) return 0;
@@ -1176,7 +1194,7 @@ index 7d9d4eb..f5cb007 100644
      if (std::strcmp(item->key, kRuntimeMouseSensitivityKey) == 0) {
          *value_out = state->options->relative_mouse_sensitivity;
          return 1;
-@@ -1246,6 +1750,111 @@ int runtime_menu_set_value(void* context, const RecompRuntimeUiItem* item,
+@@ -1246,6 +1761,111 @@ int runtime_menu_set_value(void* context, const RecompRuntimeUiItem* item,
                             int value) {
      auto* state = static_cast<RuntimeMenuState*>(context);
      if (!state || !state->options || !item) return 0;
@@ -1187,7 +1205,7 @@ index 7d9d4eb..f5cb007 100644
 +        return 1;
 +    }
 +    if (std::strcmp(item->key, "nx.layout") == 0) {
-+        if (value < 0 || value > 3) return 0;
++        if (value < 0 || value >= kNxLayoutCount) return 0;
 +        g_nx_layout = value;
 +        std::fprintf(stderr, "[mph-nx] layout: %s\n", kNxLayoutNames[value]);
 +        nx_save_settings(*state->options);
@@ -1288,7 +1306,7 @@ index 7d9d4eb..f5cb007 100644
      if (std::strcmp(item->key, kRuntimeMouseSensitivityKey) == 0) {
          if (value < 10 || value > 400) return 0;
          state->options->relative_mouse_sensitivity =
-@@ -1267,6 +1876,23 @@ int runtime_menu_run_action(void* context, const RecompRuntimeUiItem* item) {
+@@ -1267,6 +1887,23 @@ int runtime_menu_run_action(void* context, const RecompRuntimeUiItem* item) {
          if (state->running) *state->running = false;
          return 1;
      }
@@ -1312,7 +1330,7 @@ index 7d9d4eb..f5cb007 100644
      return 0;
  }
  
-@@ -1323,6 +1949,15 @@ bool runtime_menu_key_input(SDL_Scancode scancode,
+@@ -1323,6 +1960,15 @@ bool runtime_menu_key_input(SDL_Scancode scancode,
  bool runtime_menu_controller_input(SDL_GameControllerButton button,
                                     RecompRuntimeUiInput* input) {
      if (!input) return false;
@@ -1328,7 +1346,7 @@ index 7d9d4eb..f5cb007 100644
      switch (button) {
          case SDL_CONTROLLER_BUTTON_START:
              *input = RECOMP_RUNTIME_UI_INPUT_TOGGLE;
-@@ -1456,6 +2091,49 @@ void destroy_presentation(FrontendPresentation& presentation) {
+@@ -1456,6 +2102,49 @@ void destroy_presentation(FrontendPresentation& presentation) {
      presentation.windows[1] = nullptr;
  }
  
@@ -1378,7 +1396,7 @@ index 7d9d4eb..f5cb007 100644
  SDL_Renderer* create_renderer(SDL_Window* window) {
  #if defined(NDS_HAVE_SDL3)
      // Driver order is NOT left to SDL3's default here. SDL3 orders its Windows
-@@ -1518,6 +2196,16 @@ SDL_Window* create_window(const char* title, int x, int y, int w, int h,
+@@ -1518,6 +2207,16 @@ SDL_Window* create_window(const char* title, int x, int y, int w, int h,
          SDL_SetWindowPosition(window, x, y);
      return window;
  #else
@@ -1395,7 +1413,7 @@ index 7d9d4eb..f5cb007 100644
      return SDL_CreateWindow(title, x, y, w, h, static_cast<uint32_t>(flags));
  #endif
  }
-@@ -1778,6 +2466,18 @@ bool create_presentation(const NdsFrontendOptions& options,
+@@ -1778,6 +2477,18 @@ bool create_presentation(const NdsFrontendOptions& options,
      const int first_height = presentation.separate
          ? kScreenHeight * kWindowScale
          : kScreenHeight * 2 * kWindowScale;
@@ -1414,7 +1432,7 @@ index 7d9d4eb..f5cb007 100644
      const uint64_t top_window_flags =
          SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
          (presentation.gl_top
-@@ -1891,15 +2591,23 @@ bool create_presentation(const NdsFrontendOptions& options,
+@@ -1891,15 +2602,23 @@ bool create_presentation(const NdsFrontendOptions& options,
              !presentation.separate && screen == 0
                  ? kScreenHeight * 2 : kScreenHeight;
          if (screen == 0 || presentation.separate) {
@@ -1439,7 +1457,7 @@ index 7d9d4eb..f5cb007 100644
  #endif
          }
          presentation.textures[screen] = SDL_CreateTexture(
-@@ -2077,6 +2785,88 @@ struct OwnedPresentationFrame {
+@@ -2077,6 +2796,88 @@ struct OwnedPresentationFrame {
  };
  #endif
  
@@ -1528,7 +1546,7 @@ index 7d9d4eb..f5cb007 100644
  PresentationTicks present_screens(FrontendPresentation& presentation,
                                    const uint32_t* top_pixels,
                                    int top_width,
-@@ -2141,8 +2931,160 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2141,8 +2942,182 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
  #endif
          return ticks;
      }
@@ -1566,6 +1584,28 @@ index 7d9d4eb..f5cb007 100644
 +        NxPresentFrame f{};
 +        f.top = top_pixels;
 +        f.bottom = bottom_pixels;
++#if defined(SRNX)
++        {
++            // SonicRush-nx widescreen: in a stage, one wide view; the hooks
++            // that keep sprites outside the DS screen run only while it shows.
++            static uint32_t wide_buf[832 * 464];
++            const bool want = g_nx_layout == kNxWide && !nx_menu_open && top_pixels && bottom_pixels &&
++                              top_width == kScreenWidth && bottom_width == kScreenWidth;
++            const bool stage = want && srnx_wide_stage_active();
++            if (stage) {
++                g_srnx_wide_l = (g_srnx_wide_w - 256) / 2;
++                g_srnx_wide_r = g_srnx_wide_w - 256 - g_srnx_wide_l;
++                g_srnx_wide_t = 0;
++                g_srnx_wide_b = g_srnx_wide_h - 192;
++            }
++            g_srnx_wide = stage ? 1 : 0;
++            if (stage && srnx_wide_render(wide_buf, top_pixels, bottom_pixels)) {
++                f.wide = wide_buf;
++                f.wide_w = g_srnx_wide_w;
++                f.wide_h = g_srnx_wide_h;
++            }
++        }
++#endif
 +        {
 +            // native22: boot splash skip (the top screen is almost all white).
 +            static int phase = 0;        // 0 not seen yet, 1 showing, 2 done
@@ -1689,7 +1729,7 @@ index 7d9d4eb..f5cb007 100644
      uint64_t start = SDL_GetPerformanceCounter();
      SDL_UpdateTexture(presentation.textures[0], nullptr, top_pixels,
                        top_width * sizeof(uint32_t));
-@@ -2152,6 +3094,51 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2152,6 +3127,51 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
      if (!presentation.separate) {
          SDL_Renderer* renderer = presentation.renderers[0];
          start = SDL_GetPerformanceCounter();
@@ -1741,7 +1781,7 @@ index 7d9d4eb..f5cb007 100644
          SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
          SDL_RenderClear(renderer);
          const SDL_Rect top_rect{
-@@ -2169,6 +3156,9 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2169,6 +3189,9 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
                                  virtual_stylus_x, virtual_stylus_y);
          draw_savestate_notice(renderer, bottom_rect, savestate_notice);
          ticks.draw += SDL_GetPerformanceCounter() - start;
@@ -1751,7 +1791,7 @@ index 7d9d4eb..f5cb007 100644
          start = SDL_GetPerformanceCounter();
          SDL_RenderPresent(renderer);
          ticks.swap += SDL_GetPerformanceCounter() - start;
-@@ -2403,6 +3393,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2403,6 +3426,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      // rate directly; the sub-sample remainder is absorbed by the bounded queue
      // instead of producing a roughly once-per-second underrun at 32768 Hz.
      want.freq = kAudioFrequency;
@@ -1765,7 +1805,7 @@ index 7d9d4eb..f5cb007 100644
      want.format = AUDIO_S16SYS;
      want.channels = 2;
  #if !defined(NDS_HAVE_SDL3)
-@@ -2446,6 +3443,19 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2446,6 +3476,19 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          options.virtual_stylus.enabled && !mph_prime_controls_available;
      MphPrimeBindingSet mph_prime_bindings{};
      MphPadBindingSet mph_pad_bindings{};
@@ -1785,7 +1825,7 @@ index 7d9d4eb..f5cb007 100644
      if (mph_prime_controls_available) {
          mph_prime_bindings = make_mph_prime_bindings(options.mph_bindings);
          mph_pad_bindings = make_mph_pad_bindings(options.mph_pad_bindings);
-@@ -2520,7 +3530,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2520,7 +3563,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          nds_set_key_mask(static_cast<uint16_t>(
              0x0FFFu &
              ~(keyboard_pressed | controller_pressed | mouse_pressed |
@@ -1798,7 +1838,7 @@ index 7d9d4eb..f5cb007 100644
      };
      publish_keys();
      nds_set_touch(0, 0, false);
-@@ -2543,6 +3557,96 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2543,6 +3590,100 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      runtime_menu_config.items = runtime_menu_items;
      runtime_menu_config.item_count =
          sizeof(runtime_menu_items) / sizeof(runtime_menu_items[0]);
@@ -1806,8 +1846,12 @@ index 7d9d4eb..f5cb007 100644
 +    static std::vector<RecompRuntimeUiItem> nx_menu_items;
 +    nx_menu_items.clear();
 +    nx_menu_items.push_back({"nx.layout", "Display", "Screen layout",
++#if defined(SRNX)
++        "Widescreen: in stages, one 16:9 view of the level (825 x 464, both screens and the space between them); menus and other screens use Stacked. Stacked: both screens as one column.",
++#else
 +        "Stacked, big top screen with a small bottom one, top only (tap minus for the bottom screen), or top only with the radar and weapons as a HUD (menus and pop-ups show the bottom screen by themselves).",
-+        RECOMP_RUNTIME_UI_CHOICE, 0, 3, 1, kNxLayoutNames, 4, nullptr});
++#endif
++        RECOMP_RUNTIME_UI_CHOICE, 0, kNxLayoutCount - 1, 1, kNxLayoutNames, kNxLayoutCount, nullptr});
 +#if defined(MPHNX_DEKO3D)
 +    nx_menu_items.push_back({"nx.resscale", "Display", "Resolution",
 +        "Draws the 3D on the top screen at 1.5x to 4x the DS resolution on the Switch GPU. The HUD and menus stay at DS resolution. Needs the GPU 3D renderer. Applies immediately.",
@@ -1895,7 +1939,7 @@ index 7d9d4eb..f5cb007 100644
      runtime_menu_config.callbacks.context = &runtime_menu_state;
      runtime_menu_config.callbacks.get_value = runtime_menu_get_value;
      runtime_menu_config.callbacks.set_value = runtime_menu_set_value;
-@@ -2552,6 +3656,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2552,6 +3693,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      runtime_menu_config.theme = "nds";
      runtime_menu_config.accept_label = "A / Enter";
      runtime_menu_config.back_label = "B / Backspace";
@@ -1906,7 +1950,7 @@ index 7d9d4eb..f5cb007 100644
      RecompRuntimeUi* runtime_ui =
          recomp_runtime_ui_create(&runtime_menu_config);
      if (!runtime_ui) {
-@@ -2561,6 +3669,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2561,6 +3706,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      bool mouse_down = false;
      bool touch_release_pending = false;
      uint32_t touch_frames_held = 0;
@@ -1921,7 +1965,7 @@ index 7d9d4eb..f5cb007 100644
      int64_t relative_delta_x = 0;
      int64_t relative_delta_y = 0;
      uint64_t relative_direct_writes = 0;
-@@ -3257,9 +4373,274 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3257,9 +4410,274 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  relative_mouse_selftest_stage = 10;
              }
          }
@@ -2196,7 +2240,7 @@ index 7d9d4eb..f5cb007 100644
              if (event.type == SDL_QUIT) {
                  release_relative_mouse();
                  running = false;
-@@ -3451,6 +4832,37 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3451,6 +4869,37 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  clear_virtual_stylus();
                  publish_keys();
              }
@@ -2234,7 +2278,7 @@ index 7d9d4eb..f5cb007 100644
              if (event.type == SDL_CONTROLLERBUTTONDOWN ||
                  event.type == SDL_CONTROLLERBUTTONUP) {
                  RecompRuntimeUiInput menu_input{};
-@@ -3707,10 +5119,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3707,10 +5156,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          if (controller) {
              // Left stick -> D-pad, with hysteresis so a stick resting near
              // a threshold never flickers a direction.
@@ -2251,7 +2295,7 @@ index 7d9d4eb..f5cb007 100644
              const bool menu_open = runtime_menu_open();
              if (menu_open) {
                  if (stick_pressed != 0) {
-@@ -3764,10 +5180,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3764,10 +5217,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                          publish_keys();
                      }
                  };
@@ -2272,7 +2316,7 @@ index 7d9d4eb..f5cb007 100644
              }
  
              if (!menu_open && virtual_stylus_available) {
-@@ -3818,7 +5244,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3818,7 +5281,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  }
              }
  
@@ -2285,7 +2329,7 @@ index 7d9d4eb..f5cb007 100644
                  // Right stick -> camera aim; triggers act as bindable
                  // pseudo-buttons (defaults: RT shoot, LT scan-fire).
                  const float rx = SDL_GameControllerGetAxis(
-@@ -3829,6 +5259,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3829,6 +5296,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                      controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 9830;
                  const bool trigger_left = SDL_GameControllerGetAxis(
                      controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 9830;
@@ -2295,7 +2339,7 @@ index 7d9d4eb..f5cb007 100644
                  if (trigger_right != mph_pad_trigger_right_held) {
                      mph_pad_trigger_right_held = trigger_right;
                      process_mph_prime_pad(MphPadInputKind::TriggerRight,
-@@ -3920,7 +5353,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3920,7 +5390,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  MphPrimeAction::VirtualStylus)];
          const bool generic_virtual_stylus = virtual_stylus_active();
  
@@ -2308,7 +2352,7 @@ index 7d9d4eb..f5cb007 100644
          if (turbo_want != turbo_active) {
              turbo_active = turbo_want;
              if (audio) {
-@@ -3937,6 +5374,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3937,6 +5411,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                           turbo_active ? "on" : "off");
          }
  
@@ -2329,7 +2373,7 @@ index 7d9d4eb..f5cb007 100644
          if ((relative_mouse.captured() || mph_prime_pad_engaged) &&
              options.relative_mouse_direct_aim &&
              !mph_prime_virtual_stylus &&
-@@ -3989,6 +5440,88 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3989,6 +5477,88 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                      nds_set_touch(128, 96, true);
              }
          }
@@ -2418,7 +2462,7 @@ index 7d9d4eb..f5cb007 100644
          if (options.custom_gamepad_bindings) {
              // Button events handle digital bindings; poll signed axes here.
              // Each row has one source, so clearing an axis row cannot release
-@@ -4186,8 +5719,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -4186,8 +5756,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  presentation, blend_cache.blended[0].data(), top_width,
                  blend_cache.blended[1].data(), bottom_width,
                  runtime_ui,
@@ -2430,7 +2474,7 @@ index 7d9d4eb..f5cb007 100644
                  savestate_notice.empty() ? nullptr : savestate_notice.c_str());
              if (!synthetic_ticks.ok) {
                  compute_failed = true;
-@@ -4210,14 +5744,18 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -4210,14 +5781,18 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
              presentation, top_pixels, top_width,
              bottom_pixels, bottom_width,
              runtime_ui,
@@ -2465,7 +2509,7 @@ index 39d81a4..fb6bde1 100644
      pad.missile = "Pad X";
      pad.weapon1 = "None";
 diff --git a/runner/src/gpu2d.cpp b/runner/src/gpu2d.cpp
-index c03b216..ade1eff 100644
+index c03b216..8dcbbf8 100644
 --- a/runner/src/gpu2d.cpp
 +++ b/runner/src/gpu2d.cpp
 @@ -153,6 +153,17 @@ bool g_hd_frame_valid = false;
@@ -2961,6 +3005,23 @@ index c03b216..ade1eff 100644
  
      AdaptiveFrame& adaptive = g_adaptive_frame[screen & 1];
      if (width) *width = static_cast<uint16_t>(output_width);
+@@ -3266,3 +3597,16 @@ const char* nds_gpu2d_adaptive_fallback_name(uint32_t index) {
+     return index < NDS_GPU2D_ADAPTIVE_FALLBACK_COUNT ? kNames[index]
+                                                      : "unknown";
+ }
++
++// SonicRush-nx host debug: the 2D engines' latched scroll and affine state
++// (BG scroll registers are write-only on the bus).
++void nds_gpu2d_debug_regs(int e, uint16_t bgx[4], uint16_t bgy[4], int32_t refx[2],
++                          int32_t refy[2], int16_t pabcd[8]) {
++    const Unit& u = g_unit[e & 1];
++    for (int i = 0; i < 4; ++i) { bgx[i] = u.bgx[i]; bgy[i] = u.bgy[i]; }
++    for (int i = 0; i < 2; ++i) {
++        refx[i] = u.refx[i]; refy[i] = u.refy[i];
++        pabcd[i * 4 + 0] = u.pa[i]; pabcd[i * 4 + 1] = u.pb[i];
++        pabcd[i * 4 + 2] = u.pc[i]; pabcd[i * 4 + 3] = u.pd[i];
++    }
++}
 diff --git a/runner/src/gpu2d.h b/runner/src/gpu2d.h
 index 991071a..f086d1b 100644
 --- a/runner/src/gpu2d.h

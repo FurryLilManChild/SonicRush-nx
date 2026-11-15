@@ -42,6 +42,10 @@ struct NxPresentFrame
     uint32_t serial3d;          // native8g: which 3D frame this frame shows (0 unknown)
     NxPanel panels[3];          // native16
     int npanels;
+    // SonicRush-nx widescreen: when set, this picture (wide_w x wide_h, at
+    // most 832 x 464) fills the whole screen instead of the DS screens.
+    const uint32_t* wide;
+    int wide_w, wide_h;
 };
 
 struct NxPresentTicks { uint64_t upload, draw, swap; };

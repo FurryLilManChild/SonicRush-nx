@@ -59,12 +59,18 @@ dk::Shader g_panel;
 bool g_panel_ok = false;
 dk::MemBlock g_comp_mem;
 dk::Image g_comp;
+// SonicRush-nx widescreen: one pitch-linear wide picture per swapchain slot
+constexpr int kWideMaxW = 832, kWideMaxH = 464;
+dk::MemBlock g_wide_mem;
+dk::Image g_wide[kSlots];
+uint32_t* g_wide_cpu[kSlots];
+bool g_wide_ok = false;
 struct PanelParams {
     uint32_t dst_x, dst_y, dst_w, dst_h, src_x, src_y, src_w, src_h, alpha_dark, alpha_bright, pitch;
 };
 
 // native8c diagnostics
-std::atomic<unsigned> g_stat_hd[4] = {}, g_stat_refused{0}, g_stat_plain{0};
+std::atomic<unsigned> g_stat_hd[4] = {}, g_stat_refused{0}, g_stat_plain{0}, g_stat_wide{0};
 // native8g frame cadence: presents, frames dropped unshown, how many presents
 // each 3D frame stayed up (1, 2, 3, 4+), 3D frames shown out of order, and
 // the emulation thread's wait for the display.
@@ -82,7 +88,7 @@ struct HdParams {
 // moves on; the thread presents the newest complete frame (an older one that
 // was never shown is dropped, as a display at 60 Hz would drop it anyway).
 struct Job {
-    std::vector<uint32_t> top, bottom, hd_top, hd_below;
+    std::vector<uint32_t> top, bottom, hd_top, hd_below, wide;
     NxPresentFrame f{};
     std::string hud, notice;
 };
@@ -183,8 +189,8 @@ void draw_notice(uint32_t* buf, const char* text, const char* (*glyph)(char))
     }
 }
 
-bool make_pitch_image(dk::Image& img, uint32_t*& cpu, uint32_t w, uint32_t h, uint32_t& offset,
-                      uint32_t* where = nullptr)
+bool make_pitch_image_in(dk::MemBlock& mem, dk::Image& img, uint32_t*& cpu, uint32_t w, uint32_t h,
+                         uint32_t& offset, uint32_t* where = nullptr)
 {
     dk::ImageLayout layout;
     dk::ImageLayoutMaker{NxDeko::Device}
@@ -194,11 +200,16 @@ bool make_pitch_image(dk::Image& img, uint32_t*& cpu, uint32_t w, uint32_t h, ui
         .setPitchStride(w * 4)
         .initialize(layout);
     offset = align_up(offset, (uint32_t)layout.getAlignment());
-    img.initialize(layout, g_src_mem, offset);
+    img.initialize(layout, mem, offset);
     if (where) *where = offset;
-    cpu = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(g_src_mem.getCpuAddr()) + offset);
+    cpu = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(mem.getCpuAddr()) + offset);
     offset += (uint32_t)layout.getSize();
     return true;
+}
+bool make_pitch_image(dk::Image& img, uint32_t*& cpu, uint32_t w, uint32_t h, uint32_t& offset,
+                      uint32_t* where = nullptr)
+{
+    return make_pitch_image_in(g_src_mem, img, cpu, w, h, offset, where);
 }
 
 DkImageRect rect(const NxRect& r) { return {(uint32_t)r.x, (uint32_t)r.y, 0, (uint32_t)r.w, (uint32_t)r.h, 1}; }
@@ -251,6 +262,18 @@ bool nx_present_init()
     for (int i = 0; i < 16 * 16; ++i) black[i] = 0xFF000000u;
     if (off > src_bytes) { std::fprintf(stderr, "[present] staging overflow\n"); return false; }
 
+    {   // SonicRush-nx widescreen pictures
+        const uint32_t wide_bytes = align_up(kSlots * ((uint32_t)kWideMaxW * kWideMaxH * 4 + 0x1000), DK_MEMBLOCK_ALIGNMENT);
+        g_wide_mem = dk::MemBlockMaker{dev, wide_bytes}
+            .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
+            .create();
+        uint32_t woff = 0;
+        g_wide_ok = true;
+        for (int i = 0; i < kSlots; ++i)
+            if (!make_pitch_image_in(g_wide_mem, g_wide[i], g_wide_cpu[i], kWideMaxW, kWideMaxH, woff)) g_wide_ok = false;
+        if (woff > wide_bytes) g_wide_ok = false;
+        std::fprintf(stderr, "[present] widescreen pictures %s\n", g_wide_ok ? "ready" : "unavailable");
+    }
     g_cmd_mem = dk::MemBlockMaker{dev, align_up(kCmdSlotSize * kSlots, DK_MEMBLOCK_ALIGNMENT)}
         .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
         .create();
@@ -332,6 +355,36 @@ void present_now(const NxPresentFrame& f)
     if (g_fence_used[slot]) g_fence[slot].wait();
     uint64_t t1 = armGetSystemTick();
 
+    if (f.wide && g_wide_ok) {
+        // SonicRush-nx widescreen: the wide picture fills the screen
+        uint32_t* dst = g_wide_cpu[slot];
+        for (int y = 0; y < f.wide_h; ++y)
+            std::memcpy(dst + (size_t)y * kWideMaxW, f.wide + (size_t)y * f.wide_w, (size_t)f.wide_w * 4);
+        g_cmd.clear();
+        g_cmd.addMemory(g_cmd_mem, slot * kCmdSlotSize, kCmdSlotSize);
+        dk::ImageView fb_view{g_fb[slot]};
+        dk::ImageView wide_view{g_wide[slot]};
+        g_cmd.blitImage(wide_view, {0, 0, 0, (uint32_t)f.wide_w, (uint32_t)f.wide_h, 1}, fb_view,
+                        {0, 0, 0, kFbW, kFbH, 1}, DkBlitFlag_FilterLinear);
+        if (f.hud_text && *f.hud_text) {
+            uint32_t* hud = g_src_cpu[slot][2];
+            for (int i = 0; i < kHudW * kHudH; ++i) hud[i] = 0xFF000000u;
+            int hud_chars = draw_text(hud, kHudW, kHudH, 2, 2, f.hud_text, f.glyph);
+            if (hud_chars > (kHudW - 4) / 6) hud_chars = (kHudW - 4) / 6;
+            if (hud_chars > 0) {
+                const uint32_t hw = (uint32_t)(hud_chars * 6 + 3);
+                dk::ImageView hud_view{g_src[slot][2]};
+                g_cmd.blitImage(hud_view, {0, 0, 0, hw, 11, 1}, fb_view, {6, 6, 0, hw * 3, 33, 1},
+                                DkBlitFlag_FilterNearest);
+            }
+        }
+        g_cmd.signalFence(g_fence[slot]);
+        g_fence_used[slot] = true;
+        g_queue.submitCommands(g_cmd.finishList());
+        g_queue.presentImage(g_swapchain, slot);
+        g_stat_wide++;
+        return;
+    }
     uint32_t* top = g_src_cpu[slot][0];
     uint32_t* bottom = g_src_cpu[slot][1];
     uint32_t* hud = g_src_cpu[slot][2];
@@ -482,6 +535,8 @@ void nx_present_frame(const NxPresentFrame& in, NxPresentTicks* ticks)
     };
     j.f.top = take(j.top, in.top, kDsW * kDsH);
     j.f.bottom = take(j.bottom, in.bottom, kDsW * kDsH);
+    j.f.wide = (in.wide && in.wide_w > 0 && in.wide_w <= kWideMaxW && in.wide_h > 0 && in.wide_h <= kWideMaxH)
+                   ? take(j.wide, in.wide, (size_t)in.wide_w * in.wide_h) : nullptr;
     if (in.hd) {
         j.f.hd_top = take(j.hd_top, in.hd_top, kDsW * kDsH * 2);
         j.f.hd_below = take(j.hd_below, in.hd_below, kDsW * kDsH * 2);
@@ -511,7 +566,7 @@ void nx_present_stats(char* buf, int n)
     for (int v = 0; v < 4 && o < n; ++v)
         o += std::snprintf(buf + o, n - o, " %s %u", kNames[v], g_stat_hd[v].exchange(0));
     if (o < n)
-        o += std::snprintf(buf + o, n - o, "  refused %u  plain %u", g_stat_refused.exchange(0), g_stat_plain.exchange(0));
+        o += std::snprintf(buf + o, n - o, "  refused %u  plain %u  wide %u", g_stat_refused.exchange(0), g_stat_plain.exchange(0), g_stat_wide.exchange(0));
     if (o < n)
         std::snprintf(buf + o, n - o, " | cadence: presents %u dropped %u  3D frame held 1:%u 2:%u 3:%u 4+:%u  backwards %u  emu waited %.0f ms",
                       g_stat_presents.exchange(0), g_stat_dropped.exchange(0),
