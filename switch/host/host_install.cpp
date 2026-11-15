@@ -38,9 +38,13 @@ uint32_t nds_gpu2d_read(uint32_t addr, uint32_t width);
 void nds_gpu2d_debug_regs(int e, uint16_t bgx[4], uint16_t bgy[4], int32_t refx[2], int32_t refy[2], int16_t pabcd[8]);
 extern unsigned long long g_srnx_gx_busy_skips, g_srnx_gx_busy_reads;   // gpu3d.cpp
 extern bool g_srnx_gx_skip;
+extern void (*g_srnx_vblank_hook)();
 
 namespace {
 const SrnxSprite* g_spr_tmp = nullptr;
+SrnxWideParams g_wide_p{};
+std::vector<uint8_t> g_wide_data;
+bool g_wide_have = false;
 void write_shot(const char* f) {
     std::FILE* o = std::fopen(f, "wb");
     if (!o) return;
@@ -219,13 +223,25 @@ void play_hook(uint64_t cyc) {
                 std::fwrite(sp, sizeof(SrnxSprite), n, o);
             }
             std::fclose(o);
-            if (srnx_wide_stage_active()) {
+            if (g_wide_have) {
                 static uint32_t wide[kSrnxWideMaxW * kSrnxWideMaxH];
-                if (srnx_wide_render(wide, nullptr, nullptr))
-                    if (std::FILE* w = std::fopen((stem + ".wide").c_str(), "wb")) {
-                        std::fwrite(wide, 4, (size_t)g_srnx_wide_w * g_srnx_wide_h, w);
-                        std::fclose(w);
+                SrnxWideParams pp = g_wide_p;
+                if (std::getenv("NR_WIDE_NOPASTE")) pp.main_valid = 0;
+                srnx_wide_draw_cpu(pp, g_wide_data.data(), wide, g_wide_p.view_w);
+                if (std::getenv("NR_WIDE_DATA"))
+                    if (std::FILE* m = std::fopen((stem + ".wdata").c_str(), "wb")) {
+                        std::fwrite(g_wide_data.data(), 1, g_wide_data.size(), m);
+                        std::fclose(m);
                     }
+                if (std::FILE* m = std::fopen((stem + ".wmain").c_str(), "wb")) {
+                    std::fwrite(g_wide_data.data() + g_wide_p.off_main, 4, 256 * 192, m);
+                    std::fclose(m);
+                }
+                if (std::FILE* w = std::fopen((stem + ".wide").c_str(), "wb")) {
+                    std::fwrite(&g_wide_p, sizeof(g_wide_p), 1, w);
+                    std::fwrite(wide, 4, (size_t)g_wide_p.view_w * g_wide_p.view_h, w);
+                    std::fclose(w);
+                }
             } else {
                 std::fprintf(stderr, "[srnx] wide view: not a stage\n");
             }
@@ -265,8 +281,19 @@ void play_hook(uint64_t cyc) {
         ++g_next_shot;
     }
 }
+// our stage view at every VBlank start: latch the camera, then snapshot with
+// the DS screens just drawn (as the Switch frontend does when it presents)
+void wide_vblank() {
+    srnx_wide_vblank();
+    if (!g_srnx_wide) return;
+    if (g_wide_data.empty()) g_wide_data.resize(kSrnxDataBytes);
+    g_wide_have = srnx_wide_stage_active() &&
+                  srnx_wide_snapshot(g_wide_p, g_wide_data.data(), nds_gpu2d_framebuffer(0), nds_gpu2d_framebuffer(1));
+    g_srnx_hide_hud = 1;
+}
 void round_hook(uint64_t cyc) {
     play_hook(cyc);
+
     const NdsSavestateIdentity id{"srnx-host", "bc617530bb9b6e4179f2e54d7816c38676812dde"};
     static unsigned waits = 0;
     if (!g_save_step.done && cyc >= g_save_step.at) {
@@ -296,6 +323,9 @@ struct Install {
         g_load_step = parse_step(std::getenv("NR_STATE_LOAD"));
         if (std::getenv("SRNX_NOSKIP")) g_srnx_gx_skip = false;
         if (const char* w = std::getenv("NR_WIDE")) g_srnx_wide = w[0] == '1';
+        if (const char* w = std::getenv("NR_WIDE_LAG")) g_srnx_cam_lag = std::atoi(w);
+        if (const char* w = std::getenv("NR_WIDE_ZOOM")) g_srnx_zoom = std::atoi(w);
+        g_srnx_vblank_hook = wide_vblank;
         if (const char* w = std::getenv("NR_WIDE_LRTB"))
             std::sscanf(w, "%d,%d,%d,%d", &g_srnx_wide_l, &g_srnx_wide_r, &g_srnx_wide_t, &g_srnx_wide_b);
         parse_input(std::getenv("NR_INPUT"));

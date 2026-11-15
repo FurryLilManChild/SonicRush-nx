@@ -42,10 +42,10 @@ struct NxPresentFrame
     uint32_t serial3d;          // native8g: which 3D frame this frame shows (0 unknown)
     NxPanel panels[3];          // native16
     int npanels;
-    // SonicRush-nx widescreen: when set, this picture (wide_w x wide_h, at
-    // most 832 x 464) fills the whole screen instead of the DS screens.
-    const uint32_t* wide;
-    int wide_w, wide_h;
+    // SonicRush-nx stage view: when set, this snapshot (srnx_wide_render.h)
+    // is drawn on the GPU and fills the screen instead of the DS screens.
+    const struct SrnxWideParams* wide_p;
+    const uint8_t* wide_data;
 };
 
 struct NxPresentTicks { uint64_t upload, draw, swap; };
@@ -59,6 +59,9 @@ bool nx_present_active();
 void nx_present_frame(const NxPresentFrame& frame, NxPresentTicks* ticks);
 // native8c diagnostics: frames composed at each render size since the last
 // call, and frames the presenter refused (one line of text).
+// SonicRush-nx: compare the GPU stage view with the CPU drawing for the next
+// few frames (logged).
+void nx_present_wide_check(int frames);
 void nx_present_stats(char* buf, int n);
 // native8g: hand frames to the presenter at the display's rate (default on).
 extern bool g_nx_display_lock;

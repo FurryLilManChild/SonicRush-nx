@@ -54,7 +54,7 @@ int engine_of_slot(uint32_t slot, int* idx, uint32_t* base) {
 void finish(int e) {
     Frame& f = g_cur[e];
     for (uint32_t i = 0; i < f.n; ++i) {
-        const uint32_t slot = f.base + 8u * f.s[i].slot;
+        const uint32_t slot = f.base + 8u * (f.s[i].slot & 0x7F);
         const uint32_t w0 = bus_read_u32_slow(slot), w1 = bus_read_u32_slow(slot + 4u);
         f.s[i].attr0 = (uint16_t)w0;
         f.s[i].attr1 = (uint16_t)(w0 >> 16);
@@ -70,6 +70,9 @@ extern "C" {
 int g_srnx_wide = 0;
 int g_srnx_wide_l = 284, g_srnx_wide_r = 285, g_srnx_wide_t = 0, g_srnx_wide_b = 272;
 uint32_t g_srnx_spr_overflow = 0;
+int g_srnx_hide_hud = 0;
+static int g_ctx_hud = 0;
+void srnx_spr_ctx(int hud) { g_ctx_hud = hud; }
 
 // Set by a clip hook for the sprite about to be allocated: whether it lies on
 // the DS screen. A sprite kept only for the wide view is pushed off the DS
@@ -111,9 +114,10 @@ uint32_t srnx_spr_record(uint32_t slot, uint32_t x, uint32_t y, uint32_t mgr) {
     f.base = base;
     if (f.n >= SRNX_MAX_SPR) { ++g_srnx_spr_overflow; return y; }
     SrnxSprite& s = f.s[f.n++];
-    s.slot = (uint16_t)idx;
+    s.slot = (uint16_t)(idx | (g_ctx_hud ? 0x8000 : 0));
     s.x = (int32_t)x;
     s.y = (int32_t)y;
+    if (e == 0 && g_srnx_wide && g_ctx_hud && g_srnx_hide_hud) return 192u << 12;
     return (e == 0 && g_srnx_wide && clip == 0) ? (192u << 12) : y;
 }
 

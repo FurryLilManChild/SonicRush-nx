@@ -10,7 +10,7 @@ def read(path):
         recs = []
         for i in range(n):
             x, y, slot, a0, a1, a2 = struct.unpack_from('<iiHHHH', d, off); off += 16
-            recs.append(dict(x=x / 4096, y=y / 4096, slot=slot, a0=a0, a1=a1, a2=a2))
+            recs.append(dict(x=x / 4096, y=y / 4096, slot=slot & 0x7F, hud=bool(slot & 0x8000), a0=a0, a1=a1, a2=a2))
         out.append(recs)
     return out
 
@@ -18,4 +18,4 @@ if __name__ == '__main__':
     for e, recs in enumerate(read(sys.argv[1])):
         print('engine', e, len(recs))
         for r in recs:
-            print('  slot %3d x %8.1f y %8.1f  a0 %04X a1 %04X a2 %04X' % (r['slot'], r['x'], r['y'], r['a0'], r['a1'], r['a2']))
+            print('  slot %3d %s x %8.1f y %8.1f  a0 %04X a1 %04X a2 %04X' % (r['slot'], 'HUD' if r['hud'] else '   ', r['x'], r['y'], r['a0'], r['a1'], r['a2']))

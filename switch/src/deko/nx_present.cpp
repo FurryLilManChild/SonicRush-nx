@@ -2,6 +2,9 @@
 // Swapchain setup follows RSDuck's melonDS Switch port (frontend/switch/Gfx.cpp,
 // GPL-3.0); the drawing is 2D-engine blits from CPU-written pitch-linear images.
 #include "nx_present.h"
+#include "../srnx_wide_render.h"
+#include <cmath>
+#include <algorithm>
 #include "nx_deko.h"
 
 #include <switch.h>
@@ -65,6 +68,13 @@ dk::MemBlock g_wide_mem;
 dk::Image g_wide[kSlots];
 uint32_t* g_wide_cpu[kSlots];
 bool g_wide_ok = false;
+// stage view snapshot per slot (params + data) and the shader that draws it
+dk::MemBlock g_wsnap_mem;
+uint32_t g_wsnap_off[kSlots];
+constexpr uint32_t kWParamsBytes = 256;
+dk::Shader g_wide_shader;
+bool g_wide_shader_ok = false;
+int g_wide_checks = 0;          // CPU-vs-GPU checks left (first frames of each stage)
 struct PanelParams {
     uint32_t dst_x, dst_y, dst_w, dst_h, src_x, src_y, src_w, src_h, alpha_dark, alpha_bright, pitch;
 };
@@ -88,7 +98,9 @@ struct HdParams {
 // moves on; the thread presents the newest complete frame (an older one that
 // was never shown is dropped, as a display at 60 Hz would drop it anyway).
 struct Job {
-    std::vector<uint32_t> top, bottom, hd_top, hd_below, wide;
+    std::vector<uint32_t> top, bottom, hd_top, hd_below;
+    SrnxWideParams wide_p{};
+    std::vector<uint8_t> wide_data;
     NxPresentFrame f{};
     std::string hud, notice;
 };
@@ -272,7 +284,14 @@ bool nx_present_init()
         for (int i = 0; i < kSlots; ++i)
             if (!make_pitch_image_in(g_wide_mem, g_wide[i], g_wide_cpu[i], kWideMaxW, kWideMaxH, woff)) g_wide_ok = false;
         if (woff > wide_bytes) g_wide_ok = false;
-        std::fprintf(stderr, "[present] widescreen pictures %s\n", g_wide_ok ? "ready" : "unavailable");
+        const uint32_t snap_slot = align_up(kWParamsBytes + kSrnxDataBytes, 0x1000);
+        g_wsnap_mem = dk::MemBlockMaker{dev, align_up(kSlots * snap_slot, DK_MEMBLOCK_ALIGNMENT)}
+            .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
+            .create();
+        for (int i = 0; i < kSlots; ++i) g_wsnap_off[i] = i * snap_slot;
+        g_wide_shader_ok = NxDeko::LoadShader("WideStage", g_wide_shader);
+        std::fprintf(stderr, "[present] stage view: pictures %s, GPU drawing %s\n", g_wide_ok ? "ready" : "unavailable",
+                     g_wide_shader_ok ? "ready" : "unavailable (CPU fallback)");
     }
     g_cmd_mem = dk::MemBlockMaker{dev, align_up(kCmdSlotSize * kSlots, DK_MEMBLOCK_ALIGNMENT)}
         .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
@@ -355,17 +374,43 @@ void present_now(const NxPresentFrame& f)
     if (g_fence_used[slot]) g_fence[slot].wait();
     uint64_t t1 = armGetSystemTick();
 
-    if (f.wide && g_wide_ok) {
-        // SonicRush-nx widescreen: the wide picture fills the screen
-        uint32_t* dst = g_wide_cpu[slot];
-        for (int y = 0; y < f.wide_h; ++y)
-            std::memcpy(dst + (size_t)y * kWideMaxW, f.wide + (size_t)y * f.wide_w, (size_t)f.wide_w * 4);
+    if (f.wide_p && f.wide_data && g_wide_ok) {
+        // SonicRush-nx stage view: draw the snapshot, scale it to the screen
+        SrnxWideParams wp = *f.wide_p;
+        wp.out_pitch = kWideMaxW;
+        const int vw = wp.view_w, vh = wp.view_h;
         g_cmd.clear();
         g_cmd.addMemory(g_cmd_mem, slot * kCmdSlotSize, kCmdSlotSize);
         dk::ImageView fb_view{g_fb[slot]};
         dk::ImageView wide_view{g_wide[slot]};
-        g_cmd.blitImage(wide_view, {0, 0, 0, (uint32_t)f.wide_w, (uint32_t)f.wide_h, 1}, fb_view,
-                        {0, 0, 0, kFbW, kFbH, 1}, DkBlitFlag_FilterLinear);
+        const bool gpu = g_wide_shader_ok;
+        if (gpu) {
+            uint8_t* snap = static_cast<uint8_t*>(g_wsnap_mem.getCpuAddr()) + g_wsnap_off[slot];
+            std::memcpy(snap, &wp, sizeof(wp));
+            std::memcpy(snap + kWParamsBytes, f.wide_data, kSrnxDataBytes);
+            const DkGpuAddr base = g_wsnap_mem.getGpuAddr() + g_wsnap_off[slot];
+            g_cmd.bindShaders(DkStageFlag_Compute, {&g_wide_shader});
+            g_cmd.bindUniformBuffer(DkStage_Compute, 0, base, kWParamsBytes);
+            g_cmd.bindStorageBuffers(DkStage_Compute, 0, {
+                {base + kWParamsBytes, kSrnxDataBytes},
+                {g_wide_mem.getGpuAddr() + (DkGpuAddr)((uint8_t*)g_wide_cpu[slot] - (uint8_t*)g_wide_mem.getCpuAddr()),
+                 (uint32_t)(kWideMaxW * kWideMaxH * 4)},
+            });
+            g_cmd.dispatchCompute((uint32_t)(vw + 7) / 8, (uint32_t)(vh + 7) / 8, 1);
+            g_cmd.barrier(DkBarrier_Full, DkInvalidateFlags_Image | DkInvalidateFlags_L2Cache);
+        } else {
+            srnx_wide_draw_cpu(wp, f.wide_data, g_wide_cpu[slot], kWideMaxW);
+        }
+        // black edges, then the view at the largest scale that fits (whole
+        // numbers stay pixel-sharp: 424x240 is exactly 3x on 720p)
+        dk::ImageView black_view{g_black};
+        g_cmd.blitImage(black_view, {0, 0, 0, 16, 16, 1}, fb_view, {0, 0, 0, kFbW, kFbH, 1}, DkBlitFlag_FilterNearest);
+        const double sc = std::min((double)kFbW / vw, (double)kFbH / vh);
+        const bool whole = std::fabs(sc - std::floor(sc + 1e-6)) < 1e-6;
+        const uint32_t dw = (uint32_t)std::lround(vw * sc), dh = (uint32_t)std::lround(vh * sc);
+        g_cmd.blitImage(wide_view, {0, 0, 0, (uint32_t)vw, (uint32_t)vh, 1}, fb_view,
+                        {(kFbW - dw) / 2, (kFbH - dh) / 2, 0, dw, dh, 1},
+                        whole ? DkBlitFlag_FilterNearest : DkBlitFlag_FilterLinear);
         if (f.hud_text && *f.hud_text) {
             uint32_t* hud = g_src_cpu[slot][2];
             for (int i = 0; i < kHudW * kHudH; ++i) hud[i] = 0xFF000000u;
@@ -381,6 +426,19 @@ void present_now(const NxPresentFrame& f)
         g_cmd.signalFence(g_fence[slot]);
         g_fence_used[slot] = true;
         g_queue.submitCommands(g_cmd.finishList());
+        if (gpu && g_wide_checks > 0) {
+            // check the GPU drawing against the CPU drawing of the same snapshot
+            --g_wide_checks;
+            g_fence[slot].wait();
+            std::vector<uint32_t> ref((size_t)vw * vh);
+            srnx_wide_draw_cpu(wp, f.wide_data, ref.data(), vw);
+            size_t diff = 0;
+            for (int y = 0; y < vh; ++y)
+                for (int x = 0; x < vw; ++x)
+                    diff += ((ref[(size_t)y * vw + x] ^ g_wide_cpu[slot][(size_t)y * kWideMaxW + x]) & 0xFFFFFF) != 0;
+            std::fprintf(stderr, "[present] stage view check: GPU vs CPU %zu of %d pixels differ (%dx%d)\n",
+                         diff, vw * vh, vw, vh);
+        }
         g_queue.presentImage(g_swapchain, slot);
         g_stat_wide++;
         return;
@@ -535,8 +593,15 @@ void nx_present_frame(const NxPresentFrame& in, NxPresentTicks* ticks)
     };
     j.f.top = take(j.top, in.top, kDsW * kDsH);
     j.f.bottom = take(j.bottom, in.bottom, kDsW * kDsH);
-    j.f.wide = (in.wide && in.wide_w > 0 && in.wide_w <= kWideMaxW && in.wide_h > 0 && in.wide_h <= kWideMaxH)
-                   ? take(j.wide, in.wide, (size_t)in.wide_w * in.wide_h) : nullptr;
+    j.f.wide_p = nullptr;
+    j.f.wide_data = nullptr;
+    if (in.wide_p && in.wide_data && in.wide_p->view_w > 0 && in.wide_p->view_w <= kWideMaxW &&
+        in.wide_p->view_h > 0 && in.wide_p->view_h <= kWideMaxH) {
+        j.wide_p = *in.wide_p;
+        j.wide_data.assign(in.wide_data, in.wide_data + kSrnxDataBytes);
+        j.f.wide_p = &j.wide_p;
+        j.f.wide_data = j.wide_data.data();
+    }
     if (in.hd) {
         j.f.hd_top = take(j.hd_top, in.hd_top, kDsW * kDsH * 2);
         j.f.hd_below = take(j.hd_below, in.hd_below, kDsW * kDsH * 2);
@@ -558,6 +623,8 @@ void nx_present_frame(const NxPresentFrame& in, NxPresentTicks* ticks)
         ticks->swap = 0;
     }
 }
+
+void nx_present_wide_check(int frames) { g_wide_checks = frames; }
 
 void nx_present_stats(char* buf, int n)
 {

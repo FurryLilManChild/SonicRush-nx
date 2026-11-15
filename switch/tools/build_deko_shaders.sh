@@ -86,6 +86,10 @@ names+=("HdCompose")
 cmds+="uam --stage=comp --out '$OUT/dksh/HdCompose.dksh' '$OUT/glsl/HdCompose.glsl' || exit 1; "
 # presenter: Top only + HUD panels (native16)
 cp "$SRC/PanelBlend.glsl" "$OUT/glsl/PanelBlend.glsl"
+# SonicRush-nx: our own stage view
+cp "$SRC/WideStage.glsl" "$OUT/glsl/WideStage.glsl"
+names+=("WideStage")
+cmds+="uam --stage=comp --out '$OUT/dksh/WideStage.dksh' '$OUT/glsl/WideStage.glsl' || exit 1; "
 names+=("PanelBlend")
 cmds+="uam --stage=comp --out '$OUT/dksh/PanelBlend.dksh' '$OUT/glsl/PanelBlend.glsl' || exit 1; "
 "$DK" "$cmds"

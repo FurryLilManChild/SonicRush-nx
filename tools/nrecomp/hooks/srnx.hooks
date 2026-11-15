@@ -21,3 +21,9 @@ r4 = srnx_spr_record(r0, r5, r4, NR_LDR32(r10));
   if (_c > 0) goto L_020330C4; if (_c == 0) goto L_0203308C; }
 @020330D0
 r9 = (uint32_t)((int32_t)srnx_spr_record(r0, r8 << 12, r9 << 12, NR_LDR32(r10)) >> 12);
+# Who is drawing: the animated sprite routine called from 0x02032C8C (lr 0x02032D14)
+# draws the HUD (score, time, rings, lives); everything else is the stage.
+@02032D2C
+srnx_spr_ctx(r14 == 0x02032D14u);
+@02032480
+srnx_spr_ctx(0);
