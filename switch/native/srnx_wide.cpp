@@ -34,7 +34,11 @@ struct Frame {
     SrnxSprite s[SRNX_MAX_SPR];
     uint32_t n = 0;
     uint32_t base = 0;
+    int32_t cam_x = 0, cam_y = 0;   // the camera the game placed this frame's sprites by (24.8)
 };
+// main engine camera record (0x0236AAD8): the sprite routines subtract this
+// camera's position, so a frame's records plus it give world positions
+constexpr uint32_t kCamRec[2] = {0x0236AAD8u, 0x0236AB3Cu};
 Frame g_cur[2], g_last[2];
 int g_prev_idx[2] = {1 << 30, 1 << 30};
 uint32_t g_mgr[2] = {0, 0};
@@ -111,6 +115,10 @@ uint32_t srnx_spr_record(uint32_t slot, uint32_t x, uint32_t y, uint32_t mgr) {
     if ((idx <= g_prev_idx[e] || base != g_cur[e].base) && g_cur[e].n) finish(e);
     g_prev_idx[e] = idx;
     Frame& f = g_cur[e];
+    if (!f.n) {
+        f.cam_x = (int32_t)bus_read_u32_slow(kCamRec[e] + 4u);
+        f.cam_y = (int32_t)bus_read_u32_slow(kCamRec[e] + 8u);
+    }
     f.base = base;
     if (f.n >= SRNX_MAX_SPR) { ++g_srnx_spr_overflow; return y; }
     SrnxSprite& s = f.s[f.n++];
@@ -124,6 +132,11 @@ uint32_t srnx_spr_record(uint32_t slot, uint32_t x, uint32_t y, uint32_t mgr) {
 uint32_t srnx_spr_last(int engine, const SrnxSprite** out) {
     *out = g_last[engine & 1].s;
     return g_last[engine & 1].n;
+}
+
+void srnx_spr_last_cam(int engine, int32_t* x, int32_t* y) {
+    *x = g_last[engine & 1].cam_x;
+    *y = g_last[engine & 1].cam_y;
 }
 
 uint32_t srnx_spr_frames(int engine) { return g_frames[engine & 1]; }

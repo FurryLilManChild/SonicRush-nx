@@ -148,29 +148,58 @@ uint brighten(uint c)
     return 0xFF000000u | (r << 16) | (g << 8) | b;
 }
 
+uint e6(uint v) { return (v << 2) | (v >> 4); }
+
 void main()
 {
     int x = int(gl_GlobalInvocationID.x), y = int(gl_GlobalInvocationID.y);
+    if (Pad1 == 0xC0DEu) {
+        // probe: echo a few parameters so the presenter can check the GPU
+        // sees the uniform block and both buffers
+        if (x == 0 && y == 0) {
+            Out[0] = uint(ViewW); Out[1] = uint(ViewH); Out[2] = OffSpr; Out[3] = Data[0]; Out[4] = 0x600Du;
+        }
+        return;
+    }
     if (x >= ViewW || y >= ViewH) return;
-    uint c;
+    // BGs, front to back
+    uint bcol = 0u;
+    int bkey = 99;
+    for (int i = 2; i >= 0 && bkey == 99; --i) {
+        uint bg = i == 2 ? Order2 : i == 1 ? Order1 : Order0;
+        if (bg > 3u || ((DispCnt >> (8u + bg)) & 1u) == 0u) continue;
+        uint cc;
+        if (bg_pixel(bg, x, y, cc)) { bcol = cc; bkey = int(bgcnt(bg) & 3u) * 8 + 2 + int(bg); }
+    }
+    uint below = bkey < 99 ? rgb(bcol) : Backdrop;
+    int below_key = bkey;
+    // sprites
+    uint sc; int sp;
+    if (((DispCnt >> 12) & 1u) != 0u && spr_pixel(0u, min(NSpr, 384u), x, y, sc, sp) && sp * 8 + 1 < below_key) {
+        below = rgb(sc);
+        below_key = sp * 8 + 1;
+    }
+    uint c = below;
+    // the DS 3D layer (BG0)
     int mx = x - MainX, my = y - MainY;
     if (MainValid != 0u && mx >= 0 && my >= 0 && mx < 256 && my < 192) {
-        c = rd32(OffMain + 4u * uint(my * 256 + mx));
-    } else {
-        uint col = 0u;
-        int bprio = 4;
-        bool have = false;
-        for (int i = 2; i >= 0 && !have; --i) {               // front to back
-            uint bg = i == 2 ? Order2 : i == 1 ? Order1 : Order0;
-            if (bg > 3u || ((DispCnt >> (8u + bg)) & 1u) == 0u) continue;
-            uint cc;
-            if (bg_pixel(bg, x, y, cc)) { col = cc; bprio = int(bgcnt(bg) & 3u); have = true; }
+        uint t = rd32(OffMain + 4u * uint(my * 256 + mx));
+        uint a = (t >> 24) & 31u;
+        int key3 = int(BgCnt0 & 3u) * 8 + 2;
+        if (a != 0u && key3 < below_key) {
+            uint r = e6(t & 63u), g = e6((t >> 8) & 63u), b = e6((t >> 16) & 63u);
+            if (a >= 31u) c = 0xFF000000u | (r << 16) | (g << 8) | b;
+            else {
+                uint ia = 31u - a;
+                uint br = (below >> 16) & 255u, bg_ = (below >> 8) & 255u, bb = below & 255u;
+                // x/31 without a divide: (x * 8457) >> 18 is exact for x <= 7905 (255 * 31)
+                c = 0xFF000000u | ((((r * a + br * ia) * 8457u) >> 18) << 16) |
+                    ((((g * a + bg_ * ia) * 8457u) >> 18) << 8) | (((b * a + bb * ia) * 8457u) >> 18);
+            }
         }
-        uint sc; int sp;
-        if (((DispCnt >> 12) & 1u) != 0u && spr_pixel(0u, NSpr, x, y, sc, sp) && sp <= bprio) { col = sc; have = true; }
-        c = brighten(have ? rgb(col) : Backdrop);
     }
+    c = brighten(c);
     uint hc; int hp;
-    if (NHud != 0u && spr_pixel(NSpr, NHud, x, y, hc, hp)) c = brighten(rgb(hc));
+    if (NHud != 0u && spr_pixel(NSpr, min(NHud, 64u), x, y, hc, hp)) c = brighten(rgb(hc));
     Out[uint(y) * OutPitch + uint(x)] = c;
 }

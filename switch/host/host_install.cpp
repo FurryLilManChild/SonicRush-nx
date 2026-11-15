@@ -45,6 +45,7 @@ const SrnxSprite* g_spr_tmp = nullptr;
 SrnxWideParams g_wide_p{};
 std::vector<uint8_t> g_wide_data;
 bool g_wide_have = false;
+uint32_t g_wide_ds[2][256 * 192];
 void write_shot(const char* f) {
     std::FILE* o = std::fopen(f, "wb");
     if (!o) return;
@@ -233,8 +234,8 @@ void play_hook(uint64_t cyc) {
                         std::fwrite(g_wide_data.data(), 1, g_wide_data.size(), m);
                         std::fclose(m);
                     }
-                if (std::FILE* m = std::fopen((stem + ".wmain").c_str(), "wb")) {
-                    std::fwrite(g_wide_data.data() + g_wide_p.off_main, 4, 256 * 192, m);
+                if (std::FILE* m = std::fopen((stem + ".wds").c_str(), "wb")) {
+                    std::fwrite(g_wide_ds, 4, 2 * 256 * 192, m);
                     std::fclose(m);
                 }
                 if (std::FILE* w = std::fopen((stem + ".wide").c_str(), "wb")) {
@@ -290,6 +291,10 @@ void wide_vblank() {
     g_wide_have = srnx_wide_stage_active() &&
                   srnx_wide_snapshot(g_wide_p, g_wide_data.data(), nds_gpu2d_framebuffer(0), nds_gpu2d_framebuffer(1));
     g_srnx_hide_hud = 1;
+    if (g_wide_have) {   // the DS screens at this VBlank, for host checks
+        for (int sc = 0; sc < 2; ++sc)
+            if (const uint32_t* fb = nds_gpu2d_framebuffer(sc)) std::memcpy(g_wide_ds[sc], fb, sizeof(g_wide_ds[sc]));
+    }
 }
 void round_hook(uint64_t cyc) {
     play_hook(cyc);

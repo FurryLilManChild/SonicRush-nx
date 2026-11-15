@@ -73,6 +73,10 @@ dk::MemBlock g_wsnap_mem;
 uint32_t g_wsnap_off[kSlots];
 constexpr uint32_t kWParamsBytes = 256;
 dk::Shader g_wide_shader;
+// GPU output: GPU-only image memory, as PanelBlend's working setup
+dk::MemBlock g_wide_gpu_mem;
+dk::Image g_wide_gpu[kSlots];
+uint32_t g_wide_gpu_off[kSlots];
 bool g_wide_shader_ok = false;
 int g_wide_checks = 0;          // CPU-vs-GPU checks left (first frames of each stage)
 struct PanelParams {
@@ -290,6 +294,54 @@ bool nx_present_init()
             .create();
         for (int i = 0; i < kSlots; ++i) g_wsnap_off[i] = i * snap_slot;
         g_wide_shader_ok = NxDeko::LoadShader("WideStage", g_wide_shader);
+        if (g_wide_shader_ok) {
+            dk::ImageLayout gl;
+            dk::ImageLayoutMaker{dev}
+                .setFlags(DkImageFlags_PitchLinear | DkImageFlags_Usage2DEngine)
+                .setFormat(DkImageFormat_BGRA8_Unorm)
+                .setDimensions(kWideMaxW, kWideMaxH)
+                .setPitchStride(kWideMaxW * 4)
+                .initialize(gl);
+            const uint32_t one = align_up((uint32_t)gl.getSize(), (uint32_t)gl.getAlignment());
+            g_wide_gpu_mem = dk::MemBlockMaker{dev, align_up(one * kSlots, DK_MEMBLOCK_ALIGNMENT)}
+                .setFlags(DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
+                .create();
+            for (int i = 0; i < kSlots; ++i) {
+                g_wide_gpu_off[i] = i * one;
+                g_wide_gpu[i].initialize(gl, g_wide_gpu_mem, g_wide_gpu_off[i]);
+            }
+            // probe: run the shader once in its echo mode and read the result
+            // back, so the log says whether the GPU runs it and sees the
+            // parameters and both buffers
+            uint8_t* base = static_cast<uint8_t*>(g_wsnap_mem.getCpuAddr());
+            SrnxWideParams pp{};
+            pp.view_w = 7; pp.view_h = 5; pp.off_spr = 0x1234; pp.pad[0] = 0xC0DEu;
+            uint32_t* outw = reinterpret_cast<uint32_t*>(base + kWParamsBytes + kSrnxDataBytes - 4096);
+            for (int i = 0; i < 8; ++i) outw[i] = 0;
+            *reinterpret_cast<uint32_t*>(base + kWParamsBytes) = 0xABCD1234u;
+            const DkGpuAddr gb = g_wsnap_mem.getGpuAddr();
+            g_cmd.clear();
+            g_cmd.addMemory(g_cmd_mem, 0, kCmdSlotSize);
+            g_cmd.bindShaders(DkStageFlag_Compute, {&g_wide_shader});
+            g_cmd.bindUniformBuffer(DkStage_Compute, 0, gb, kWParamsBytes);
+            g_cmd.pushConstants(gb, kWParamsBytes, 0, sizeof(pp), &pp);
+            g_cmd.bindStorageBuffers(DkStage_Compute, 0, {
+                {gb + kWParamsBytes, 4096},
+                {gb + kWParamsBytes + kSrnxDataBytes - 4096, 4096},
+            });
+            g_cmd.dispatchCompute(1, 1, 1);
+            g_cmd.barrier(DkBarrier_Full, DkInvalidateFlags_L2Cache);
+            dk::Fence probe;
+            g_cmd.signalFence(probe, true);
+            g_queue.submitCommands(g_cmd.finishList());
+            const uint64_t t0 = armGetSystemTick();
+            const DkResult r = probe.wait(1000000000);
+            const double ms = armTicksToNs(armGetSystemTick() - t0) / 1e6;
+            std::fprintf(stderr, "[present] stage view GPU probe: %s in %.2f ms, read %u %u %X %X %X (want 7 5 1234 ABCD1234 600D)\n",
+                         r == DkResult_Success ? "finished" : "DID NOT FINISH", ms, outw[0], outw[1], outw[2], outw[3], outw[4]);
+            if (r != DkResult_Success || outw[4] != 0x600Du) g_wide_shader_ok = false;
+            g_cmd.clear();
+        }
         std::fprintf(stderr, "[present] stage view: pictures %s, GPU drawing %s\n", g_wide_ok ? "ready" : "unavailable",
                      g_wide_shader_ok ? "ready" : "unavailable (CPU fallback)");
     }
@@ -390,18 +442,22 @@ void present_now(const NxPresentFrame& f)
                          gpu ? "GPU" : "CPU");
         if (gpu) {
             uint8_t* snap = static_cast<uint8_t*>(g_wsnap_mem.getCpuAddr()) + g_wsnap_off[slot];
-            std::memcpy(snap, &wp, sizeof(wp));
             std::memcpy(snap + kWParamsBytes, f.wide_data, kSrnxDataBytes);
             const DkGpuAddr base = g_wsnap_mem.getGpuAddr() + g_wsnap_off[slot];
             g_cmd.bindShaders(DkStageFlag_Compute, {&g_wide_shader});
             g_cmd.bindUniformBuffer(DkStage_Compute, 0, base, kWParamsBytes);
+            g_cmd.pushConstants(base, kWParamsBytes, 0, sizeof(wp), &wp);
             g_cmd.bindStorageBuffers(DkStage_Compute, 0, {
                 {base + kWParamsBytes, kSrnxDataBytes},
-                {g_wide_mem.getGpuAddr() + (DkGpuAddr)((uint8_t*)g_wide_cpu[slot] - (uint8_t*)g_wide_mem.getCpuAddr()),
-                 (uint32_t)(kWideMaxW * kWideMaxH * 4)},
+                {g_wide_gpu_mem.getGpuAddr() + g_wide_gpu_off[slot], (uint32_t)(kWideMaxW * kWideMaxH * 4)},
             });
             g_cmd.dispatchCompute((uint32_t)(vw + 7) / 8, (uint32_t)(vh + 7) / 8, 1);
             g_cmd.barrier(DkBarrier_Full, DkInvalidateFlags_Image | DkInvalidateFlags_L2Cache);
+            if (g_wide_checks > 0) {   // copy out for the CPU comparison below
+                dk::ImageView gv{g_wide_gpu[slot]};
+                g_cmd.blitImage(gv, {0, 0, 0, (uint32_t)vw, (uint32_t)vh, 1}, wide_view, {0, 0, 0, (uint32_t)vw, (uint32_t)vh, 1},
+                                DkBlitFlag_FilterNearest);
+            }
         } else {
             srnx_wide_draw_cpu(wp, f.wide_data, g_wide_cpu[slot], kWideMaxW);
         }
@@ -412,7 +468,8 @@ void present_now(const NxPresentFrame& f)
         const double sc = std::min((double)kFbW / vw, (double)kFbH / vh);
         const bool whole = std::fabs(sc - std::floor(sc + 1e-6)) < 1e-6;
         const uint32_t dw = (uint32_t)std::lround(vw * sc), dh = (uint32_t)std::lround(vh * sc);
-        g_cmd.blitImage(wide_view, {0, 0, 0, (uint32_t)vw, (uint32_t)vh, 1}, fb_view,
+        dk::ImageView gpu_view{g_wide_gpu[slot]};
+        g_cmd.blitImage(gpu ? gpu_view : wide_view, {0, 0, 0, (uint32_t)vw, (uint32_t)vh, 1}, fb_view,
                         {(kFbW - dw) / 2, (kFbH - dh) / 2, 0, dw, dh, 1},
                         whole ? DkBlitFlag_FilterNearest : DkBlitFlag_FilterLinear);
         if (f.hud_text && *f.hud_text) {

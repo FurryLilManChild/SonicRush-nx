@@ -27,6 +27,8 @@ uint32_t srnx_spr_record(uint32_t slot, uint32_t x, uint32_t y, uint32_t mgr);
 void srnx_spr_ctx(int hud);
 uint32_t srnx_spr_last(int engine, const SrnxSprite** out);
 uint32_t srnx_spr_frames(int engine);
+// camera (24.8) the last whole frame's sprites were placed by
+void srnx_spr_last_cam(int engine, int32_t* x, int32_t* y);
 uint32_t srnx_spr_mgr(int engine);
 void srnx_alloc_count(uint32_t lr, uint32_t mgr);
 void srnx_alloc_report(void);

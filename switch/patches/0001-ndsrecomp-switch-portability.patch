@@ -2539,7 +2539,7 @@ index 39d81a4..fb6bde1 100644
      pad.missile = "Pad X";
      pad.weapon1 = "None";
 diff --git a/runner/src/gpu2d.cpp b/runner/src/gpu2d.cpp
-index c03b216..8dcbbf8 100644
+index c03b216..2aeb3d3 100644
 --- a/runner/src/gpu2d.cpp
 +++ b/runner/src/gpu2d.cpp
 @@ -153,6 +153,17 @@ bool g_hd_frame_valid = false;
@@ -2560,7 +2560,41 @@ index c03b216..8dcbbf8 100644
  
  uint32_t hd_meta(const Pixel& p, uint8_t window_mask) {
      return static_cast<uint32_t>(p.target & 0x3Fu) |
-@@ -1079,6 +1090,7 @@ struct LineJob {
+@@ -1068,6 +1079,33 @@ struct LineScratch {
+         NDS_GPU2D_DIRECT_BG_MASK_COUNT] = {};
+ };
+ 
++#if defined(SRNX)
++// SonicRush-nx stage view: the main engine's 3D layer of the last whole
++// frame (256 x 192, melonDS 3D pixels: RGB6 at bits 0/8/16, alpha5 at 24),
++// kept as the scheduler pulls each line in scanline order.
++namespace {
++std::array<uint32_t, 256 * 192> g_srnx_3d_cur{}, g_srnx_3d_done{};
++std::atomic<uint32_t> g_srnx_3d_frames{0};
++void srnx_keep_3d_line(int y, const uint32_t* line) {
++    if (y < 0 || y >= 192) return;
++    uint32_t* d = g_srnx_3d_cur.data() + y * 256;
++    if (line) std::copy_n(line, 256, d);
++    else std::fill_n(d, 256, 0u);
++    if (y == 191) {
++        g_srnx_3d_done = g_srnx_3d_cur;
++        g_srnx_3d_frames.fetch_add(1, std::memory_order_release);
++    }
++}
++}  // namespace
++const uint32_t* srnx_3d_frame_impl(uint32_t* frames) {
++    if (frames) *frames = g_srnx_3d_frames.load(std::memory_order_acquire);
++    return g_srnx_3d_done.data();
++}
++}  // namespace (file scope for the export)
++const uint32_t* nds_gpu2d_srnx_3d_frame(uint32_t* frames) { return srnx_3d_frame_impl(frames); }
++namespace {
++#endif
++
+ struct LineJob {
+     Unit unit[2]{};
+     const uint8_t* palette[2]{};
+@@ -1079,6 +1117,7 @@ struct LineJob {
      std::array<uint32_t, 256> line3d_storage{};
      const uint32_t* line3d = nullptr;
      uint32_t buffer = 0;
@@ -2568,7 +2602,7 @@ index c03b216..8dcbbf8 100644
      uint32_t screen[2]{};
      int y = 0;
      bool engine_active[2]{};
-@@ -1642,6 +1654,20 @@ uint64_t ns_since(std::chrono::steady_clock::time_point a,
+@@ -1642,6 +1681,20 @@ uint64_t ns_since(std::chrono::steady_clock::time_point a,
  // write could change is captured here, and the two pieces of renderer-owned
  // mutable state -- the BG2/BG3 affine accumulators and the DISPCAPCNT enable
  // latch -- are advanced here and nowhere else.
@@ -2589,7 +2623,7 @@ index c03b216..8dcbbf8 100644
  void latch_line(int y, LineJob& job) {
      const bool engine_a_on_top = (nds_powercontrol9() & 0x8000u) != 0;
      job.y = y;
-@@ -1654,7 +1680,18 @@ void latch_line(int y, LineJob& job) {
+@@ -1654,7 +1707,18 @@ void latch_line(int y, LineJob& job) {
          job.screen[e] = static_cast<uint32_t>(engine_a_on_top ? e : (e ^ 1));
          job.palette[e] = nds_vram_renderer_palette(e);
          job.oam[e] = nds_vram_renderer_oam(e);
@@ -2608,7 +2642,7 @@ index c03b216..8dcbbf8 100644
      }
      job.engine_active[0] = !g_direct_frame_active;
      job.engine_active[1] = true;
-@@ -1692,6 +1729,44 @@ void latch_line(int y, LineJob& job) {
+@@ -1692,6 +1756,44 @@ void latch_line(int y, LineJob& job) {
      if (job.direct_pixels && job.cap) job.engine_active[0] = true;
      job.bg0_3d = (job.unit[0].dispcnt & 0x8u) != 0 &&
                   (job.unit[0].dispcnt & 0x100u) != 0;
@@ -2653,7 +2687,17 @@ index c03b216..8dcbbf8 100644
  
      // The 3D line and the wide-3D snapshot are pulled here, in scanline order,
      // under exactly the condition the inline render used: GPU3D::GetLine writes
-@@ -1786,7 +1861,13 @@ void render_direct_window_line(const LineJob& job) {
+@@ -1709,6 +1811,9 @@ void latch_line(int y, LineJob& job) {
+         if (line3d) {
+             std::copy_n(line3d, 256, job.line3d_storage.data());
+             job.line3d = job.line3d_storage.data();
++#if defined(SRNX)
++            srnx_keep_3d_line(y, job.bg0_3d ? line3d : nullptr);
++#endif
+         }
+         if (job.bg0_3d) {
+             const uint16_t wide_width = nds_gpu3d_output_width();
+@@ -1786,7 +1891,13 @@ void render_direct_window_line(const LineJob& job) {
      job.direct_params[3] = u.bgx[0] & 0x1FFu;
  }
  
@@ -2667,7 +2711,7 @@ index c03b216..8dcbbf8 100644
      if (!profiling()) {
          if (job.direct_pixels) render_direct_window_line(job);
          if (job.engine_active[0]) render_engine_line(job, 0, sc);
-@@ -1865,6 +1946,11 @@ struct Pool {
+@@ -1865,6 +1976,11 @@ struct Pool {
      std::condition_variable done_cv;
      std::vector<std::thread> threads;
      std::vector<std::unique_ptr<LineScratch>> scratch;
@@ -2679,7 +2723,7 @@ index c03b216..8dcbbf8 100644
  };
  
  std::unique_ptr<Pool> g_pool;
-@@ -1883,7 +1969,8 @@ uint32_t g_staged_bank_mask = 0;
+@@ -1883,7 +1999,8 @@ uint32_t g_staged_bank_mask = 0;
  // Next ring index whose staged capture has still to be applied.
  uint64_t g_capture_apply_index = 0;
  
@@ -2689,7 +2733,7 @@ index c03b216..8dcbbf8 100644
      // Registered with the always-on host sampler so that emu-thread time spent
      // WAITING on this pool is attributable to the pool's own host symbols
      // rather than showing up as an unexplained gap in the emu profile
-@@ -1899,6 +1986,7 @@ void worker_main(Pool* pool, LineScratch* sc) {
+@@ -1899,6 +2016,7 @@ void worker_main(Pool* pool, LineScratch* sc) {
              uint64_t c = pool->claim.load(std::memory_order_acquire);
              const uint64_t h = pool->head.load(std::memory_order_acquire);
              if (c < h) {
@@ -2697,7 +2741,7 @@ index c03b216..8dcbbf8 100644
                  if (pool->claim.compare_exchange_weak(
                          c, c + 1, std::memory_order_acq_rel,
                          std::memory_order_acquire)) {
-@@ -1908,6 +1996,7 @@ void worker_main(Pool* pool, LineScratch* sc) {
+@@ -1908,6 +2026,7 @@ void worker_main(Pool* pool, LineScratch* sc) {
                  }
                  continue;
              }
@@ -2705,7 +2749,7 @@ index c03b216..8dcbbf8 100644
              std::unique_lock<std::mutex> lock(pool->m);
              if (pool->stop.load(std::memory_order_acquire)) return;
              if (pool->claim.load(std::memory_order_acquire) >=
-@@ -1919,6 +2008,7 @@ void worker_main(Pool* pool, LineScratch* sc) {
+@@ -1919,6 +2038,7 @@ void worker_main(Pool* pool, LineScratch* sc) {
          }
          if (!have) continue;
          render_line_job(pool->jobs[index % kJobSlots], *sc);
@@ -2713,7 +2757,7 @@ index c03b216..8dcbbf8 100644
          pool->done.fetch_add(1, std::memory_order_acq_rel);
          {
              std::lock_guard<std::mutex> lock(pool->m);
-@@ -1973,7 +2063,7 @@ void start_pool() {
+@@ -1973,7 +2093,7 @@ void start_pool() {
      for (unsigned i = 0; i < n; ++i)
          pool->scratch.push_back(std::make_unique<LineScratch>());
      for (unsigned i = 0; i < n; ++i)
@@ -2722,7 +2766,7 @@ index c03b216..8dcbbf8 100644
  }
  
  // Apply every staged capture up to (not including) `target`, in ring order.
-@@ -2079,7 +2169,45 @@ void submit_line(int y) {
+@@ -2079,7 +2199,45 @@ void submit_line(int y) {
          head = pool->head.load(std::memory_order_relaxed);
      }
      LineJob& job = pool->jobs[head % kJobSlots];
@@ -2768,7 +2812,7 @@ index c03b216..8dcbbf8 100644
      if (line_reads_staged_bank(job)) {
          drain_pool(NDS_GPU2D_FENCE_CAPTURE);
          // The drain does not move head, so the reserved slot is still ours.
-@@ -2090,6 +2218,16 @@ void submit_line(int y) {
+@@ -2090,6 +2248,16 @@ void submit_line(int y) {
      // Publish under the mutex: a worker that has already evaluated its
      // predicate and is between that check and its wait would otherwise miss
      // the notification and sleep with work queued.
@@ -2785,7 +2829,7 @@ index c03b216..8dcbbf8 100644
      {
          std::lock_guard<std::mutex> lock(pool->m);
          pool->head.store(head + 1, std::memory_order_release);
-@@ -2098,6 +2236,9 @@ void submit_line(int y) {
+@@ -2098,6 +2266,9 @@ void submit_line(int y) {
      if (job.cap)
          nds_gpu2d_staged_captures.store(1u, std::memory_order_relaxed);
      ++g_threaded_lines;
@@ -2795,7 +2839,7 @@ index c03b216..8dcbbf8 100644
      pool->work_cv.notify_one();
  }
  
-@@ -2194,6 +2335,129 @@ const char* nds_gpu2d_fence_cause_name(uint32_t index) {
+@@ -2194,6 +2365,129 @@ const char* nds_gpu2d_fence_cause_name(uint32_t index) {
  }
  
  void nds_gpu2d_drain(uint32_t cause) { drain_pool(cause); }
@@ -2925,7 +2969,7 @@ index c03b216..8dcbbf8 100644
  
  void nds_gpu2d_set_threaded(bool enabled, unsigned workers) {
      if (g_threaded_requested == enabled &&
-@@ -2447,6 +2711,11 @@ void nds_gpu2d_finish_frame(){
+@@ -2447,6 +2741,11 @@ void nds_gpu2d_finish_frame(){
      g_front ^= 1;
  }
  void nds_gpu2d_vblank(){
@@ -2937,7 +2981,7 @@ index c03b216..8dcbbf8 100644
      drain_pool(NDS_GPU2D_FENCE_FRAME);
      // melonDS Unit::VBlank: the capture enable bit auto-clears at line 192
      // only if it latched at line 0 this frame.
-@@ -2575,6 +2844,9 @@ struct AdaptiveCtx {
+@@ -2575,6 +2874,9 @@ struct AdaptiveCtx {
      // the survivor layers are consumed; the adaptive RGB image is discarded.
      bool metadata_only = false;
      uint32_t front = 0;
@@ -2947,7 +2991,7 @@ index c03b216..8dcbbf8 100644
  };
  
  void composite_adaptive_line(const AdaptiveCtx& c, int y,
-@@ -2746,10 +3018,12 @@ void composite_adaptive_line(const AdaptiveCtx& c, int y,
+@@ -2746,10 +3048,12 @@ void composite_adaptive_line(const AdaptiveCtx& c, int y,
          if (emit_hd) {
              const size_t o = (static_cast<size_t>(y) * output_width + x)
                               * 2u;
@@ -2964,7 +3008,7 @@ index c03b216..8dcbbf8 100644
          }
          // The native-width caller returns its separate canonical framebuffer
          // even if enhanced presentation rejects this frame. Do not complete an
-@@ -2773,6 +3047,38 @@ void composite_adaptive_line(const AdaptiveCtx& c, int y,
+@@ -2773,6 +3077,38 @@ void composite_adaptive_line(const AdaptiveCtx& c, int y,
  }
  
  
@@ -3003,7 +3047,7 @@ index c03b216..8dcbbf8 100644
  // ---- Adaptive compositor band pool --------------------------------------
  // A second, smaller pool than the scanline one, and deliberately so: the two
  // never run at the same time (the compositor runs at present, after the frame
-@@ -2955,6 +3261,31 @@ const uint32_t* nds_gpu2d_adaptive_framebuffer(int screen, uint16_t* width) {
+@@ -2955,6 +3291,31 @@ const uint32_t* nds_gpu2d_adaptive_framebuffer(int screen, uint16_t* width) {
          if (width) *width = 256;
          return native;
      }
@@ -3035,7 +3079,7 @@ index c03b216..8dcbbf8 100644
  
      AdaptiveFrame& adaptive = g_adaptive_frame[screen & 1];
      if (width) *width = static_cast<uint16_t>(output_width);
-@@ -3266,3 +3597,16 @@ const char* nds_gpu2d_adaptive_fallback_name(uint32_t index) {
+@@ -3266,3 +3627,16 @@ const char* nds_gpu2d_adaptive_fallback_name(uint32_t index) {
      return index < NDS_GPU2D_ADAPTIVE_FALLBACK_COUNT ? kNames[index]
                                                       : "unknown";
  }

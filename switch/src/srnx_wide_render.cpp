@@ -45,6 +45,7 @@ struct NdsVramRendererView {
 const NdsVramRendererView* nds_vram_renderer_view(int engine);
 uint32_t nds_vram_read_bg(int engine, uint32_t addr, uint32_t width);
 uint32_t nds_vram_read_obj(int engine, uint32_t addr, uint32_t width);
+const uint32_t* nds_gpu2d_srnx_3d_frame(uint32_t* frames);
 
 int g_srnx_zoom = 0;
 int g_srnx_cam_lag = 2;   // host-checked: the DS screen just drawn matches the camera two VBlanks back
@@ -174,7 +175,7 @@ bool srnx_wide_stage_active() {
     return true;
 }
 
-void srnx_wide_align_main(SrnxWideParams& p, const uint8_t* data);
+void srnx_wide_align_main(SrnxWideParams& p, const uint8_t* data, const uint32_t* ds);
 
 bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, const uint32_t* bottom) {
     std::memset(&p, 0, sizeof(p));
@@ -269,6 +270,9 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     // sprites: world ones by the main camera, then HUD pinned to the corners
     const SrnxSprite* sp = nullptr;
     const uint32_t n = srnx_spr_last(0, &sp);
+    int32_t scx = 0, scy = 0;
+    srnx_spr_last_cam(0, &scx, &scy);
+    const int spr_ox = (scx >> 8) - wx, spr_oy = (scy >> 8) - wy;
     SrnxWideSpr* out = reinterpret_cast<SrnxWideSpr*>(data + p.off_spr);
     uint32_t nw = 0, nh = 0;
     for (int pass = 0; pass < 2; ++pass)
@@ -281,8 +285,8 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
                 if (x >= 128) x += VW - 256;
                 if (y >= 172) y += VH - 192;
             } else {
-                x += cam0x - wx;
-                y += cam0y - wy;
+                x += spr_ox;
+                y += spr_oy;
             }
             o.x = x;
             o.y = y;
@@ -296,11 +300,17 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     p.hud_dy = VH - 192;
 
     // the main engine's screen: bottom LCD while camera 0 is the lower one
+    // Only the 3D layer comes from the DS side (the 2D engine keeps each
+    // frame's 3D lines); level and sprites are all ours, so nothing else is
+    // stitched. The 3D frame is placed by the DS screen it went into, which
+    // the latched camera puts within a pixel or so; the DS screen's level
+    // pixels settle the exact spot.
     const uint32_t* mainscr = (cam0y > cam1y) ? bottom : top;
-    p.main_valid = mainscr ? 1u : 0u;
-    if (mainscr) {
-        std::memcpy(data + p.off_main, mainscr, 256 * 192 * 4);
-        srnx_wide_align_main(p, data);
+    const uint32_t* f3d = nds_gpu2d_srnx_3d_frame(nullptr);
+    p.main_valid = (mainscr && f3d && (p.dispcnt & 0x100)) ? 1u : 0u;
+    if (p.main_valid) {
+        std::memcpy(data + p.off_main, f3d, 256 * 192 * 4);
+        srnx_wide_align_main(p, data, mainscr);
     }
     (void)kGap;
     return true;
@@ -425,7 +435,7 @@ uint32_t brighten(uint32_t c, uint32_t mb) {
 // The latched camera frames the DS screen to within a pixel or so; settle the
 // exact spot by matching our level layers against the DS screen on a sparse
 // grid of points (sprites and the 3D layer only add noise to every offset).
-void srnx_wide_align_main(SrnxWideParams& p, const uint8_t* data) {
+void srnx_wide_align_main(SrnxWideParams& p, const uint8_t* data, const uint32_t* ds_screen) {
     const Src s{p, data};
     int best = -1, bdx = 0, bdy = 0;
     for (int dy = -3; dy <= 3; ++dy)
@@ -442,7 +452,7 @@ void srnx_wide_align_main(SrnxWideParams& p, const uint8_t* data) {
                         have = bg_pixel(s, bg, x, y, col);
                     }
                     const uint32_t ours = have ? rgb(col) : p.backdrop;
-                    const uint32_t ds = s.u32(p.off_main + 4u * (uint32_t)(gy * 256 + gx));
+                    const uint32_t ds = ds_screen[gy * 256 + gx];
                     score += ((ours ^ ds) & 0xFFFFFF) == 0;
                 }
             if (score > best || (score == best && dx == 0 && dy == 0)) { best = score; bdx = dx; bdy = dy; }
@@ -451,30 +461,56 @@ void srnx_wide_align_main(SrnxWideParams& p, const uint8_t* data) {
     p.main_y += bdy;
 }
 
+// One view pixel: the frontmost of our BG layers, our sprites and the DS 3D
+// layer by DS rules (sprite above a BG of the same priority, BG0 = 3D above
+// higher-numbered BGs); a partly transparent 3D edge blends with what is
+// below it; master brightness over all; HUD on top.
+uint32_t srnx_wide_pixel(const Src& s, int x, int y) {
+    const SrnxWideParams& p = s.p;
+    // BGs, front to back
+    uint16_t bcol = 0;
+    int bprio = 4, bkey = 99;
+    for (int i = 2; i >= 0; --i) {
+        const int bg = (int)p.order[i];
+        if (bg > 3 || !((p.dispcnt >> (8 + bg)) & 1)) continue;
+        uint16_t cc;
+        if (bg_pixel(s, bg, x, y, cc)) { bcol = cc; bprio = p.bgcnt[bg] & 3; bkey = bprio * 8 + 2 + bg; break; }
+    }
+    uint32_t below = bkey < 99 ? rgb(bcol) : p.backdrop;
+    int below_key = bkey;
+    // sprites
+    uint16_t sc; int sp = 4;
+    if (((p.dispcnt >> 12) & 1) && spr_pixel(s, 0, p.nspr, x, y, sc, sp) && sp * 8 + 1 < below_key) {
+        below = rgb(sc);
+        below_key = sp * 8 + 1;
+    }
+    uint32_t c = below;
+    // the 3D layer (BG0)
+    const int mx = x - p.main_x, my = y - p.main_y;
+    if (p.main_valid && mx >= 0 && my >= 0 && mx < 256 && my < 192) {
+        const uint32_t t = s.u32(p.off_main + 4u * (uint32_t)(my * 256 + mx));
+        const uint32_t a = (t >> 24) & 31;
+        const int key3 = (int)(p.bgcnt[0] & 3) * 8 + 2;
+        if (a && key3 < below_key) {
+            auto e6 = [](uint32_t v) { return (v << 2) | (v >> 4); };
+            const uint32_t r = e6(t & 63), g = e6((t >> 8) & 63), b = e6((t >> 16) & 63);
+            if (a >= 31) c = 0xFF000000u | (r << 16) | (g << 8) | b;
+            else {
+                const uint32_t ia = 31 - a;
+                const uint32_t br = (below >> 16) & 255, bgc = (below >> 8) & 255, bb = below & 255;
+                c = 0xFF000000u | (((r * a + br * ia) / 31) << 16) | (((g * a + bgc * ia) / 31) << 8) | ((b * a + bb * ia) / 31);
+            }
+        }
+    }
+    c = brighten(c, p.bright);
+    uint16_t hc; int hp;
+    if (p.nhud && spr_pixel(s, p.nspr, p.nhud, x, y, hc, hp)) c = brighten(rgb(hc), p.bright);
+    return c;
+}
+
 void srnx_wide_draw_cpu(const SrnxWideParams& p, const uint8_t* data, uint32_t* out, int pitch) {
     const Src s{p, data};
     for (int y = 0; y < p.view_h; ++y)
-        for (int x = 0; x < p.view_w; ++x) {
-            uint32_t c;
-            const int mx = x - p.main_x, my = y - p.main_y;
-            if (p.main_valid && mx >= 0 && my >= 0 && mx < 256 && my < 192) {
-                c = s.u32(p.off_main + 4u * (uint32_t)(my * 256 + mx));     // already brightened
-            } else {
-                uint16_t col = 0;
-                int bprio = 4;
-                bool have = false;
-                for (int i = 2; i >= 0; --i) {           // front to back: first hit wins
-                    const int bg = (int)p.order[i];
-                    if (bg > 3 || !((p.dispcnt >> (8 + bg)) & 1)) continue;
-                    uint16_t cc;
-                    if (bg_pixel(s, bg, x, y, cc)) { col = cc; bprio = p.bgcnt[bg] & 3; have = true; break; }
-                }
-                uint16_t sc; int sp = 4;
-                if (((p.dispcnt >> 12) & 1) && spr_pixel(s, 0, p.nspr, x, y, sc, sp) && sp <= bprio) { col = sc; have = true; }
-                c = brighten(have ? rgb(col) : p.backdrop, p.bright);
-            }
-            uint16_t hc; int hp;
-            if (p.nhud && spr_pixel(s, p.nspr, p.nhud, x, y, hc, hp)) c = brighten(rgb(hc), p.bright);
-            out[y * pitch + x] = c;
-        }
+        for (int x = 0; x < p.view_w; ++x)
+            out[y * pitch + x] = srnx_wide_pixel(s, x, y);
 }
