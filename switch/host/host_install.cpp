@@ -1,4 +1,4 @@
-// MPH-nx host boot test: install the native ARM9 engine before upstream
+// SonicRush-nx host boot test (from MPH-nx): install the native ARM9 engine before upstream
 // main() runs (the Switch build does this from nx_main.cpp).
 //   NR_DISABLE=1        leave it out: the ARM9 runs on upstream's interpreter
 //                       as a reference
@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 #include "gpu2d.h"
 void nds_gpu2d_cow_stats(uint64_t* pages, uint64_t* fallbacks, uint64_t* page_mask);
 extern "C" void nr_install(void);
@@ -24,10 +25,10 @@ extern bool g_nx_dma_block;
 #include "../native/nr_state.h"
 extern void (*g_nx_host_round_hook)(uint64_t arm9_cycles);
 
+void nds_set_key_mask(uint32_t mask);   // io.cpp
+
 namespace {
-void shot_at_exit() {
-    const char* f = std::getenv("NR_SHOT");
-    if (!f) return;
+void write_shot(const char* f) {
     std::FILE* o = std::fopen(f, "wb");
     if (!o) return;
     std::fprintf(o, "P6\n256 384\n255\n");
@@ -40,6 +41,9 @@ void shot_at_exit() {
         }
     }
     std::fclose(o);
+}
+void shot_at_exit() {
+    if (const char* f = std::getenv("NR_SHOT")) write_shot(f);
 }
 void gpu2d_stats_at_exit() {
     NdsGpu2dProfile p{};
@@ -89,8 +93,91 @@ StateStep parse_step(const char* v) {
     st.done = false;
     return st;
 }
+// SonicRush-nx scripted play:
+//   NR_INPUT="at+len:KEYS,..."  at/len in millions of ARM9 cycles, KEYS joined
+//                               with '|' from A B X Y L R START SELECT UP DOWN
+//                               LEFT RIGHT (e.g. "3500+40:START,4200+600:RIGHT|A")
+//   NR_SHOTS="prefix@a,b,c"     screenshots prefix-<a>.ppm ... at a, b, c million cycles
+struct Press { unsigned long long at, end; uint32_t bits; };
+std::vector<Press> g_presses;
+std::string g_shot_prefix;
+std::vector<unsigned long long> g_shots;
+size_t g_next_shot = 0;
+uint32_t g_last_mask = 0xFFFFFFFFu;
+uint32_t key_bit(const std::string& k) {
+    static const char* names[] = {"A","B","SELECT","START","RIGHT","LEFT","UP","DOWN","R","L"};
+    for (int i = 0; i < 10; ++i) if (k == names[i]) return 1u << i;
+    if (k == "X") return 1u << 16;
+    if (k == "Y") return 1u << 17;
+    std::fprintf(stderr, "[input] unknown key %s\n", k.c_str());
+    return 0;
+}
+void parse_input(const char* v) {
+    if (!v) return;
+    std::string s(v); size_t p = 0;
+    while (p < s.size()) {
+        size_t q = s.find(',', p); if (q == std::string::npos) q = s.size();
+        const std::string it = s.substr(p, q - p);
+        const size_t plus = it.find('+'), colon = it.find(':');
+        if (plus != std::string::npos && colon != std::string::npos) {
+            Press pr{};
+            pr.at = std::strtoull(it.substr(0, plus).c_str(), nullptr, 0) * 1000000ull;
+            pr.end = pr.at + std::strtoull(it.substr(plus + 1, colon - plus - 1).c_str(), nullptr, 0) * 1000000ull;
+            std::string ks = it.substr(colon + 1); size_t a = 0;
+            while (a <= ks.size()) {
+                size_t b = ks.find('|', a); if (b == std::string::npos) b = ks.size();
+                pr.bits |= key_bit(ks.substr(a, b - a)); a = b + 1;
+            }
+            g_presses.push_back(pr);
+        }
+        p = q + 1;
+    }
+}
+void parse_shots(const char* v) {
+    if (!v) return;
+    std::string s(v); const size_t at = s.find('@');
+    if (at == std::string::npos) return;
+    g_shot_prefix = s.substr(0, at); size_t p = at + 1;
+    while (p < s.size()) {
+        size_t q = s.find(',', p); if (q == std::string::npos) q = s.size();
+        g_shots.push_back(std::strtoull(s.substr(p, q - p).c_str(), nullptr, 0) * 1000000ull);
+        p = q + 1;
+    }
+}
+//   NR_RAMDUMP="prefix@a,b"     main RAM (4 MiB) to prefix-<a>.bin at a, b million cycles
+std::string g_ram_prefix;
+std::vector<unsigned long long> g_rams;
+size_t g_next_ram = 0;
+void play_hook(uint64_t cyc) {
+    while (g_next_ram < g_rams.size() && cyc >= g_rams[g_next_ram]) {
+        const std::string f = g_ram_prefix + "-" + std::to_string(g_rams[g_next_ram] / 1000000ull) + ".bin";
+        if (std::FILE* o = std::fopen(f.c_str(), "wb")) {
+            std::vector<uint32_t> buf(0x100000);
+            for (uint32_t i = 0; i < 0x100000; ++i) buf[i] = bus_read_u32_slow(0x02000000u + 4u * i);
+            std::fwrite(buf.data(), 4, buf.size(), o);
+            std::fclose(o);
+        }
+        ++g_next_ram;
+    }
+    if (!g_presses.empty()) {
+        uint32_t held = 0;
+        for (const Press& pr : g_presses) if (cyc >= pr.at && cyc < pr.end) held |= pr.bits;
+        const uint32_t mask = 0x000303FFu & ~held;
+        if (mask != g_last_mask) {
+            nds_set_key_mask(mask);
+            std::fprintf(stderr, "[input] %llu Mcyc keys %05X\n", (unsigned long long)(cyc / 1000000ull), held);
+            g_last_mask = mask;
+        }
+    }
+    while (g_next_shot < g_shots.size() && cyc >= g_shots[g_next_shot]) {
+        const std::string f = g_shot_prefix + "-" + std::to_string(g_shots[g_next_shot] / 1000000ull) + ".ppm";
+        write_shot(f.c_str());
+        ++g_next_shot;
+    }
+}
 void round_hook(uint64_t cyc) {
-    const NdsSavestateIdentity id{"mphnx-host", "a8679d4f8dcb445cbe946a424241ef44901b0caf"};
+    play_hook(cyc);
+    const NdsSavestateIdentity id{"srnx-host", "bc617530bb9b6e4179f2e54d7816c38676812dde"};
     static unsigned waits = 0;
     if (!g_save_step.done && cyc >= g_save_step.at) {
         if (!nx_state_ready()) { ++waits; return; }
@@ -117,7 +204,21 @@ struct Install {
         std::atexit(dump_at_exit);
         g_save_step = parse_step(std::getenv("NR_STATE_SAVE"));
         g_load_step = parse_step(std::getenv("NR_STATE_LOAD"));
-        if (!g_save_step.done || !g_load_step.done) g_nx_host_round_hook = round_hook;
+        parse_input(std::getenv("NR_INPUT"));
+        parse_shots(std::getenv("NR_SHOTS"));
+        if (const char* v = std::getenv("NR_RAMDUMP")) {
+            std::string sv(v); const size_t at = sv.find('@');
+            if (at != std::string::npos) {
+                g_ram_prefix = sv.substr(0, at); size_t p = at + 1;
+                while (p < sv.size()) {
+                    size_t q = sv.find(',', p); if (q == std::string::npos) q = sv.size();
+                    g_rams.push_back(std::strtoull(sv.substr(p, q - p).c_str(), nullptr, 0) * 1000000ull);
+                    p = q + 1;
+                }
+            }
+        }
+        if (!g_save_step.done || !g_load_step.done || !g_presses.empty() || !g_shots.empty() || !g_rams.empty())
+            g_nx_host_round_hook = round_hook;
     }
 } g_install;
 }
