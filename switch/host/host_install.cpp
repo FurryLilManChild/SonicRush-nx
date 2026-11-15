@@ -23,6 +23,7 @@ extern unsigned long long g_nx_dma_blocks, g_nx_dma_block_units;   // io.cpp (na
 extern bool g_nx_dma_block;
 #include "savestate.h"
 #include "../native/nr_state.h"
+#include "../native/srnx_wide.h"
 extern void (*g_nx_host_round_hook)(uint64_t arm9_cycles);
 
 void nds_set_key_mask(uint32_t mask);   // io.cpp
@@ -38,6 +39,7 @@ extern unsigned long long g_srnx_gx_busy_skips, g_srnx_gx_busy_reads;   // gpu3d
 extern bool g_srnx_gx_skip;
 
 namespace {
+const SrnxSprite* g_spr_tmp = nullptr;
 void write_shot(const char* f) {
     std::FILE* o = std::fopen(f, "wb");
     if (!o) return;
@@ -207,6 +209,20 @@ void play_hook(uint64_t cyc) {
                 std::fclose(o);
             }
         }
+        if (std::FILE* o = std::fopen((stem + ".spr").c_str(), "wb")) {
+            // widescreen sprite records: per engine u32 count, u32 frames, then SrnxSprite[count]
+            for (int e = 0; e < 2; ++e) {
+                const SrnxSprite* sp = nullptr;
+                const uint32_t n = srnx_spr_last(e, &sp), fr = srnx_spr_frames(e);
+                std::fwrite(&n, 4, 1, o); std::fwrite(&fr, 4, 1, o);
+                std::fwrite(sp, sizeof(SrnxSprite), n, o);
+            }
+            std::fclose(o);
+            srnx_alloc_report();
+            std::fprintf(stderr, "[srnx] sprites main %u sub %u frames %u/%u mgr %08X/%08X overflow %u\n",
+                         srnx_spr_last(0, &g_spr_tmp), srnx_spr_last(1, &g_spr_tmp),
+                         srnx_spr_frames(0), srnx_spr_frames(1), srnx_spr_mgr(0), srnx_spr_mgr(1), g_srnx_spr_overflow);
+        }
         if (std::FILE* o = std::fopen((stem + ".pal").c_str(), "wb")) {
             if (const uint8_t* pal = nds_vram_palette_live()) std::fwrite(pal, 1, 0x800, o);
             std::fclose(o);
@@ -269,6 +285,9 @@ struct Install {
         g_save_step = parse_step(std::getenv("NR_STATE_SAVE"));
         g_load_step = parse_step(std::getenv("NR_STATE_LOAD"));
         if (std::getenv("SRNX_NOSKIP")) g_srnx_gx_skip = false;
+        if (const char* w = std::getenv("NR_WIDE")) g_srnx_wide = w[0] == '1';
+        if (const char* w = std::getenv("NR_WIDE_LRTB"))
+            std::sscanf(w, "%d,%d,%d,%d", &g_srnx_wide_l, &g_srnx_wide_r, &g_srnx_wide_t, &g_srnx_wide_b);
         parse_input(std::getenv("NR_INPUT"));
         parse_shots(std::getenv("NR_SHOTS"));
         if (const char* v = std::getenv("NR_POKE16")) {

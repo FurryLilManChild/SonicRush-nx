@@ -59,6 +59,7 @@ NATIVE_DIR="$BUILD_DIR/nrgen"
 # Runtime roots found by boot tests (derived from the game; never committed).
 export NR_EXTRA_ROOTS="${NR_EXTRA_ROOTS:-$(dirname "$BUILD_DIR")/nrroots.txt}"
 export NR7_EXTRA_ROOTS="${NR7_EXTRA_ROOTS:-$(dirname "$BUILD_DIR")/nrroots7.txt}"
+export NR_HOOKS="${NR_HOOKS:-$HERE/../tools/nrecomp/hooks/srnx.hooks}"
 python3 "$HERE/../tools/nrecomp/gen_all.py" "$SR_ROM" "$NATIVE_DIR" || die "native ARM9 generation failed"
 python3 "$HERE/../tools/nrecomp/gen_all7.py" "$SR_ROM" "$NATIVE_DIR" || die "native ARM7 generation failed"
 DEKO_DIR="$BUILD_DIR/deko-shaders"

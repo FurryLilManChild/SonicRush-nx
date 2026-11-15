@@ -1,0 +1,23 @@
+# Sonic Rush (USA, ASCE v0) port hooks. Format: see load_hooks in gen.py.
+# Central sprite routine, clip test (reached only when the sprite asks for clipping).
+# r5 = x, r4 = y (20.12, camera-relative); [sp+0x44], [sp+0x46] = width, height; [r10] = OAM manager.
+@020329F4
+{ int _c = srnx_spr_clip(r5, r4, NR_RD16(r13 + 0x44u), NR_RD16(r13 + 0x46u), NR_LDR32(r10));
+  if (_c > 0) goto L_02032A5C; if (_c == 0) goto L_02032A24; }
+# Right after the slot allocator: r0 = OAM slot, r5 = x, r4 = y.
+@02032B40
+srnx_spr_record(r0, r5, r4, NR_LDR32(r10));
+# Animated sprite routine 0x02032D2C, whole-sprite clip (flag 0x4000): screen x = [sp+0x10],
+# y = [sp+0x14]; box x [x+r12, x+r9], y [y+r11, y+r8]; r5 = OAM manager. Off screen returns
+# through the 'le' exit at 0x02032E78 (fz = 1 makes it taken).
+@02032E6C
+{ int32_t _x = (int32_t)NR_LDR32(r13 + 0x10u), _y = (int32_t)NR_LDR32(r13 + 0x14u);
+  int _c = srnx_spr_box(_x + (int32_t)r12, _x + (int32_t)r9, _y + (int32_t)r11, _y + (int32_t)r8, r5);
+  if (_c > 0) goto L_02032ECC; if (_c == 0) { fz = 1; goto L_02032E78; } }
+# Second sprite routine (the one most stage objects use): r8 = x, r9 = y in pixels,
+# [r2], [r2+2] = width, height, [r10] = OAM manager.
+@02033058
+{ int _c = srnx_spr_clip(r8 << 12, r9 << 12, NR_RD16(r2), NR_RD16(r2 + 2u), NR_LDR32(r10));
+  if (_c > 0) goto L_020330C4; if (_c == 0) goto L_0203308C; }
+@020330D0
+srnx_spr_record(r0, r8 << 12, r9 << 12, NR_LDR32(r10));

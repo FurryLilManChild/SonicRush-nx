@@ -89,12 +89,30 @@ def main():
                 if col is not None:
                     px[x, y] = col
                     prio[y][x] = p_
-    # sprites from both engines at their screens' positions
-    for e, oy in ((top_eng, 0), (bot_eng, 272)):
+    # sprites: with the native sprite records (.spr), the main engine's sprites at
+    # their true positions cover the whole view; otherwise both engines' OAM
+    import os
+    sets = []
+    if os.path.exists(stem + '.spr'):
+        sys.path.insert(0, __file__.rsplit('/', 1)[0])
+        from sprdump import read as read_spr
+        recs = read_spr(stem + '.spr')[0]
+        me = engs[0]
+        lst = []
+        for r in recs:
+            t = me.sprite_from_attrs(r['a0'], r['a1'], r['a2'], r['slot'], int(r['x']), int(r['y']))
+            if t is not None:
+                lst.append(t)
+        sets.append((0, 0, lst))
+    else:
+        sets = [(top_eng, 0, None), (bot_eng, 272, None)]
+    for e, oy, lst in sets:
         eng = engs[e]
         if not (eng.dc >> 12) & 1:
             continue
-        for s in sorted(eng.sprites(), key=lambda s: (-s[0], -s[1])):
+        if lst is None:
+            lst = eng.sprites()
+        for s in sorted(lst, key=lambda s: (-s[0], -s[1])):
             sp, n, sx, sy, sw, sh = s[:6]
             for yy in range(sh):
                 Y = oy + sy + yy

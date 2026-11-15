@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "runtime_arm_types.h"
+#include "srnx_wide.h"
 
 #ifdef __cplusplus
 extern "C" {

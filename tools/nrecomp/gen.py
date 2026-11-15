@@ -11,6 +11,7 @@ return address). entry != 0: resume at guest address `entry` (from the top-level
 loop). A return to anything other than the entry LR, or any resumed function's
 return, hands the target back through nr_redirect.
 """
+import os
 from decode import DP_NAMES
 
 COND = {
@@ -26,6 +27,30 @@ NOWRITE = {'tst', 'teq', 'cmp', 'cmn'}
 def h32(v):
     return '0x%08Xu' % (v & 0xFFFFFFFF)
 
+
+
+def load_hooks(path):
+    """Port hooks: C snippets run before the instruction at a guest address.
+
+    File format: a line '@ADDR' (hex) followed by C lines up to the next '@'.
+    Snippets see the guest registers as locals r0..r15 and may goto L_ADDR
+    labels of the same function. Only our own code goes in these snippets.
+    """
+    hooks = {}
+    if not path:
+        return hooks
+    cur = None
+    for line in open(path):
+        t = line.rstrip('\n')
+        if t.startswith('@'):
+            cur = int(t[1:].split()[0], 16)
+            hooks[cur] = ''
+        elif cur is not None and t.strip() and not t.strip().startswith('#'):
+            hooks[cur] += t.strip() + ' '
+    return hooks
+
+
+HOOKS = load_hooks(os.environ.get('NR_HOOKS', ''))
 
 class FuncGen:
     def __init__(self, f, name, resolve, entries, arch='v5te'):
@@ -575,6 +600,11 @@ class FuncGen:
                     cyc = 0
             self.w('L_%08X:' % a)
             self.w('    NR_TRACE(%s);' % h32(a))
+            if a in HOOKS:
+                if cyc:
+                    self.w('    ' + self.tick(cyc))
+                    cyc = 0
+                self.w('    /* hook */ ' + HOOKS[a])
             if a == f.entry:
                 self.w('    NR_FENTRY(%s);' % h32(a | (1 if f.thumb else 0)))
             cost = 1

@@ -180,30 +180,46 @@ class Engine:
         out = []
         for n in range(128):
             a0, a1, a2 = struct.unpack_from('<3H', oam, n * 8)
-            rs = (a0 >> 8) & 1
-            if not rs and (a0 >> 9) & 1:
-                continue
-            mode = (a0 >> 10) & 3
-            if mode == 3:
-                continue   # bitmap OBJ: not used by the stage sprites checked so far
-            shape = (a0 >> 14) & 3
-            if shape == 3:
-                continue
-            w, h = sizes[shape][(a1 >> 14) & 3]
+            t = self.sprite_from_attrs(a0, a1, a2, n)
+            if t is not None:
+                out.append(t)
+        return out
+
+    def sprite_from_attrs(self, a0, a1, a2, n=0, x=None, y=None):
+        """Sprite tuple from OAM attributes; x, y override the 9/8-bit OAM position."""
+        sizes = {0: [(8, 8), (16, 16), (32, 32), (64, 64)],
+                 1: [(16, 8), (32, 8), (32, 16), (64, 32)],
+                 2: [(8, 16), (8, 32), (16, 32), (32, 64)]}
+        dc = self.dc
+        one_d = bool(dc & 0x10)
+        bound = 32 << ((dc >> 20) & 3)
+        rs = (a0 >> 8) & 1
+        if not rs and (a0 >> 9) & 1:
+            return None
+        mode = (a0 >> 10) & 3
+        if mode == 3:
+            return None
+        shape = (a0 >> 14) & 3
+        if shape == 3:
+            return None
+        w, h = sizes[shape][(a1 >> 14) & 3]
+        if x is None:
             x = a1 & 0x1FF
             if x >= 256:
                 x -= 512
+        if y is None:
             y = a0 & 0xFF
             if y >= 192:
                 y -= 256
-            bpp8 = bool(a0 & 0x2000)
-            tile = a2 & 0x3FF
-            prio = (a2 >> 10) & 3
-            pal = a2 >> 12
-            hf = (not rs) and bool(a1 & 0x1000)
-            vf = (not rs) and bool(a1 & 0x2000)
-            out.append((prio, n, x, y, w, h, bpp8, tile, pal, hf, vf, one_d, bound, rs, a0, a1))
-        return out
+        if rs and (a0 >> 9) & 1:     # affine double-size: the box is twice the sprite
+            pass
+        bpp8 = bool(a0 & 0x2000)
+        tile = a2 & 0x3FF
+        prio = (a2 >> 10) & 3
+        pal = a2 >> 12
+        hf = (not rs) and bool(a1 & 0x1000)
+        vf = (not rs) and bool(a1 & 0x2000)
+        return (prio, n, x, y, w, h, bpp8, tile, pal, hf, vf, one_d, bound, rs, a0, a1)
 
     def sprite_pixel(self, s, px, py):
         prio, n, x, y, w, h, bpp8, tile, pal, hf, vf, one_d, bound, rs, a0, a1 = s
