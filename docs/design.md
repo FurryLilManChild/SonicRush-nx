@@ -33,6 +33,12 @@ A native static recompilation of Sonic Rush (USA, ASCE) for Switch homebrew: gam
 4. Widescreen rework.
 5. Release.
 
+## Decisions
+
+- 2026-11-14: Widescreen is the goal of the port; speed work waits until widescreen is proven.
+- 2026-11-14: Widescreen is a display option for the player. Default view: the full height of both DS screens plus the 80 px gap, as one picture with the gap filled by the level (464 px tall, 825 px wide at 16:9). Mark expects to tweak it after seeing it (other sizes, such as 683 x 384, stay possible as options).
+- 2026-11-14: Stacked (column) layout keeps an 80 px strip between the screens; stock clock (1020 MHz) is the target.
+
 ## Open decisions for Mark
 
 - Version numbering and default clocks at release.
