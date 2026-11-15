@@ -60,4 +60,6 @@ bool srnx_wide_stage_active();
 // (data must hold kSrnxDataBytes). top/bottom are the DS screens as drawn.
 bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, const uint32_t* bottom);
 // CPU drawing of a snapshot into out (p.view_w x p.view_h, 0xAARRGGBB, pitch in pixels).
+// Reference drawing, one pixel at a time (host checks).
+void srnx_wide_draw_ref(const SrnxWideParams& p, const uint8_t* data, uint32_t* out, int pitch);
 void srnx_wide_draw_cpu(const SrnxWideParams& p, const uint8_t* data, uint32_t* out, int pitch);

@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 
 #include "../native/nr_runtime.h"
@@ -508,9 +509,214 @@ uint32_t srnx_wide_pixel(const Src& s, int x, int y) {
     return c;
 }
 
-void srnx_wide_draw_cpu(const SrnxWideParams& p, const uint8_t* data, uint32_t* out, int pitch) {
+// Reference: one pixel at a time (slow; host checks only).
+void srnx_wide_draw_ref(const SrnxWideParams& p, const uint8_t* data, uint32_t* out, int pitch) {
     const Src s{p, data};
     for (int y = 0; y < p.view_h; ++y)
         for (int x = 0; x < p.view_w; ++x)
             out[y * pitch + x] = srnx_wide_pixel(s, x, y);
+}
+
+// The same picture, drawn the fast way: BG layers back to front in tile
+// spans (one layout and map lookup per 8 pixels), sprites one by one, the 3D
+// layer only inside its window. Matches srnx_wide_draw_ref pixel for pixel
+// (host-checked): same winner rules (frontmost BG; lowest-priority sprite,
+// earliest on ties; sprite over a BG of equal priority; 3D by its key).
+namespace {
+uint8_t g_key[kSrnxWideMaxW * kSrnxWideMaxH];       // winner key of the BG/sprite pass
+uint8_t g_sp_pr[kSrnxWideMaxW * kSrnxWideMaxH];     // sprite pass: priority (4 = none)
+uint16_t g_sp_col[kSrnxWideMaxW * kSrnxWideMaxH];
+
+// sprites [first, first+count) into g_sp_pr / g_sp_col (lowest priority wins,
+// earliest on ties: drawn last to first, a pixel taken when priority <= held)
+void draw_sprites(const Src& s, uint32_t first, uint32_t count, int W, int H) {
+    const SrnxWideParams& p = s.p;
+    std::memset(g_sp_pr, 4, (size_t)W * H);
+    const bool one_d = p.dispcnt & 0x10;
+    const uint32_t bound = 32u << ((p.dispcnt >> 20) & 3);
+    for (int i = (int)(first + count) - 1; i >= (int)first; --i) {
+        const uint32_t o = p.off_spr + (uint32_t)i * 16u;
+        const int sx = (int32_t)s.u32(o), sy = (int32_t)s.u32(o + 4);
+        const uint32_t a01 = s.u32(o + 8), a2 = s.u32(o + 12);
+        const uint32_t a0 = a01 & 0xFFFF, a1 = a01 >> 16;
+        const bool rs = (a0 >> 8) & 1;
+        if (!rs && ((a0 >> 9) & 1)) continue;
+        if (((a0 >> 10) & 3) == 3) continue;
+        const int shape = (a0 >> 14) & 3;
+        if (shape == 3) continue;
+        const int w = kSz[shape][(a1 >> 14) & 3][0], h = kSz[shape][(a1 >> 14) & 3][1];
+        if (sx >= W || sy >= H || sx + w <= 0 || sy + h <= 0) continue;
+        const uint8_t pr = (a2 >> 10) & 3;
+        const bool bpp8 = a0 & 0x2000;
+        const uint32_t tile = a2 & 0x3FF, palbase = bpp8 ? 0 : (a2 >> 12) * 16;
+        const bool hf = !rs && (a1 & 0x1000), vf = !rs && (a1 & 0x2000);
+        const int x0 = std::max(0, -sx), x1 = std::min(w, W - sx);
+        for (int yy = std::max(0, -sy); yy < h && sy + yy < H; ++yy) {
+            const int py = vf ? h - 1 - yy : yy;
+            const uint32_t ty = (uint32_t)py >> 3;
+            uint8_t* prow = g_sp_pr + (size_t)(sy + yy) * W + sx;
+            uint16_t* crow = g_sp_col + (size_t)(sy + yy) * W + sx;
+            for (int xx = x0; xx < x1; ++xx) {
+                if (pr > prow[xx]) continue;
+                const int px = hf ? w - 1 - xx : xx;
+                const uint32_t tx = (uint32_t)px >> 3;
+                const uint32_t to = one_d ? tile * bound + (ty * (uint32_t)(w / 8) + tx) * (bpp8 ? 64u : 32u)
+                                          : (tile + ty * 32u + tx * (bpp8 ? 2u : 1u)) * 32u;
+                uint32_t v;
+                if (bpp8) v = s.u8(p.off_obj + ((to + (py & 7) * 8 + (px & 7)) & (kSrnxObjVram - 1)));
+                else {
+                    const uint8_t b = s.u8(p.off_obj + ((to + (py & 7) * 4 + (px & 7) / 2) & (kSrnxObjVram - 1)));
+                    v = (px & 1) ? (b >> 4) : (b & 15);
+                }
+                if (!v) continue;
+                prow[xx] = pr;
+                crow[xx] = s.u16(p.off_objpal + 2 * (palbase + v));
+            }
+        }
+    }
+}
+}  // namespace
+
+void srnx_wide_draw_cpu(const SrnxWideParams& p, const uint8_t* data, uint32_t* out, int pitch) {
+    const Src s{p, data};
+    const int W = p.view_w, H = p.view_h;
+    if (W <= 0 || H <= 0 || W > kSrnxWideMaxW || H > kSrnxWideMaxH) return;
+    rgb(0);                                                  // LUT ready
+    const uint32_t* lut = g_rgb_lut;
+    for (int y = 0; y < H; ++y) {
+        uint32_t* o = out + (size_t)y * pitch;
+        for (int x = 0; x < W; ++x) o[x] = p.backdrop;
+    }
+    std::memset(g_key, 99, (size_t)W * H);
+
+    const uint32_t char_off = ((p.dispcnt >> 24) & 7) * 0x10000u, map_off = ((p.dispcnt >> 27) & 7) * 0x10000u;
+    const bool ext = (p.dispcnt >> 30) & 1;
+    const uint8_t* vram = data + p.off_bg;
+    constexpr uint32_t M = kSrnxBgVram - 1;
+    // BGs back to front: order[0] first, the frontmost (order[2]) last
+    for (int oi = 0; oi < 3; ++oi) {
+        const int bg = (int)p.order[oi];
+        if (bg > 3 || !((p.dispcnt >> (8 + bg)) & 1)) continue;
+        const uint32_t c = p.bgcnt[bg];
+        const uint8_t key = (uint8_t)((c & 3) * 8 + 2 + bg);
+        const uint32_t chrbase = char_off + ((c >> 2) & 15) * 0x4000u;
+        if (bg == 1) {
+            const int size = (c >> 14) & 3;
+            const int lw = (size & 1) ? 512 : 256, lh = (size & 2) ? 512 : 256;
+            const uint32_t mapbase = map_off + ((c >> 8) & 31) * 0x800u;
+            const bool b8 = c & 0x80;
+            for (int y = 0; y < H; ++y) {
+                const int yy = (y + p.bg1_sy) & (lh - 1);
+                const int ty = yy >> 3, py0 = yy & 7;
+                uint32_t* o = out + (size_t)y * pitch;
+                uint8_t* k = g_key + (size_t)y * W;
+                for (int x = 0; x < W;) {
+                    const int xx = (x + p.bg1_sx) & (lw - 1);
+                    const int tx = xx >> 3;
+                    const int span = std::min(8 - (xx & 7), W - x);
+                    uint32_t sb = 0;
+                    if (lw == 512 && tx >= 32) sb += 1;
+                    if (lh == 512 && ty >= 32) sb += (lw == 512) ? 2 : 1;
+                    const uint16_t ent = s.u16(p.off_bg + ((mapbase + sb * 0x800u + (uint32_t)(((ty & 31) * 32 + (tx & 31)) * 2)) & M));
+                    const uint32_t t = ent & 0x3FF;
+                    const int py = (ent & 0x800) ? 7 - py0 : py0;
+                    const uint32_t pal = (ent >> 12) * 16;
+                    for (int j = 0; j < span; ++j, ++x) {
+                        int px = (xx + j) & 7;
+                        if (ent & 0x400) px = 7 - px;
+                        uint32_t v;
+                        if (b8) v = vram[(chrbase + t * 64 + py * 8 + px) & M];
+                        else { const uint8_t b = vram[(chrbase + t * 32 + py * 4 + px / 2) & M]; v = (px & 1) ? (b >> 4) : (b & 15); }
+                        if (!v) continue;
+                        o[x] = lut[s.u16(p.off_bgpal + 2 * (b8 ? v : pal + v)) & 0x7FFF];
+                        k[x] = key;
+                    }
+                }
+            }
+            continue;
+        }
+        const int kk = bg - 2;
+        const uint32_t lay = kk ? p.off_lay1 : p.off_lay0;
+        const int lw = (int)p.layout_w[kk], lh = (int)p.layout_h[kk];
+        const uint32_t xp = p.off_xpal + (uint32_t)kk * 8192u;
+        for (int y = 0; y < H; ++y) {
+            const int wy = p.world_y + y;
+            if (wy < 0 || (wy >> 6) >= lh) continue;
+            const int by = wy >> 6, ty = (wy & 63) >> 3, py0 = wy & 7;
+            uint32_t* o = out + (size_t)y * pitch;
+            uint8_t* k = g_key + (size_t)y * W;
+            for (int x = 0; x < W;) {
+                const int wx = p.world_x + x;
+                const int span = std::min(8 - (wx & 7), W - x);
+                if (wx < 0 || (wx >> 6) >= lw) { x += span; continue; }
+                const uint32_t b = s.u16(lay + 2u * (uint32_t)(by * lw + (wx >> 6)));
+                if (b * 128u >= kSrnxBlkMax) { x += span; continue; }
+                const uint16_t ent = s.u16(p.off_blk + b * 128u + (uint32_t)((ty * 8 + ((wx & 63) >> 3)) * 2));
+                const int py = (ent & 0x800) ? 7 - py0 : py0;
+                const uint32_t tb = chrbase + (ent & 0x3FF) * 64u + (uint32_t)py * 8;
+                const uint32_t pb = (ent >> 12) * 256u;
+                for (int j = 0; j < span; ++j, ++x) {
+                    int px = (wx + j) & 7;
+                    if (ent & 0x400) px = 7 - px;
+                    const uint32_t v = vram[(tb + px) & M];
+                    if (!v) continue;
+                    o[x] = lut[(ext ? s.u16(xp + 2u * (pb + v)) : s.u16(p.off_bgpal + 2 * v)) & 0x7FFF];
+                    k[x] = key;
+                }
+            }
+        }
+    }
+    // world sprites over BGs of the same or a lower priority
+    if (((p.dispcnt >> 12) & 1) && p.nspr) {
+        draw_sprites(s, 0, p.nspr, W, H);
+        for (int y = 0; y < H; ++y) {
+            uint32_t* o = out + (size_t)y * pitch;
+            uint8_t* k = g_key + (size_t)y * W;
+            const uint8_t* pr = g_sp_pr + (size_t)y * W;
+            const uint16_t* cc = g_sp_col + (size_t)y * W;
+            for (int x = 0; x < W; ++x)
+                if (pr[x] < 4 && pr[x] * 8 + 1 < k[x]) { o[x] = lut[cc[x] & 0x7FFF]; k[x] = (uint8_t)(pr[x] * 8 + 1); }
+        }
+    }
+    // the 3D layer, inside its window
+    if (p.main_valid) {
+        const int key3 = (int)(p.bgcnt[0] & 3) * 8 + 2;
+        const int y0 = std::max(0, p.main_y), y1 = std::min(H, p.main_y + 192);
+        const int x0 = std::max(0, p.main_x), x1 = std::min(W, p.main_x + 256);
+        for (int y = y0; y < y1; ++y) {
+            uint32_t* o = out + (size_t)y * pitch;
+            const uint8_t* k = g_key + (size_t)y * W;
+            // row start such that row3 + 4 * x is pixel (x - main_x, y - main_y); signed, it can lie before the frame
+            const uint8_t* row3 = data + p.off_main + 4 * ((std::ptrdiff_t)(y - p.main_y) * 256 - p.main_x);
+            for (int x = x0; x < x1; ++x) {
+                uint32_t t;
+                std::memcpy(&t, row3 + 4 * x, 4);
+                const uint32_t a = (t >> 24) & 31;
+                if (!a || key3 >= k[x]) continue;
+                const uint32_t r = ((t & 63) << 2) | ((t & 63) >> 4), g = (((t >> 8) & 63) << 2) | (((t >> 8) & 63) >> 4),
+                               b = (((t >> 16) & 63) << 2) | (((t >> 16) & 63) >> 4);
+                if (a >= 31) { o[x] = 0xFF000000u | (r << 16) | (g << 8) | b; continue; }
+                const uint32_t below = o[x], ia = 31 - a;
+                o[x] = 0xFF000000u | (((r * a + ((below >> 16) & 255) * ia) / 31) << 16) |
+                       (((g * a + ((below >> 8) & 255) * ia) / 31) << 8) | ((b * a + (below & 255) * ia) / 31);
+            }
+        }
+    }
+    // master brightness, then the HUD
+    const uint32_t mode = (p.bright >> 14) & 3;
+    if (mode == 1 || mode == 2)
+        for (int y = 0; y < H; ++y) {
+            uint32_t* o = out + (size_t)y * pitch;
+            for (int x = 0; x < W; ++x) o[x] = brighten(o[x], p.bright);
+        }
+    if (p.nhud) {
+        draw_sprites(s, p.nspr, p.nhud, W, H);
+        for (int y = 0; y < H; ++y) {
+            uint32_t* o = out + (size_t)y * pitch;
+            const uint8_t* pr = g_sp_pr + (size_t)y * W;
+            const uint16_t* cc = g_sp_col + (size_t)y * W;
+            for (int x = 0; x < W; ++x)
+                if (pr[x] < 4) o[x] = brighten(lut[cc[x] & 0x7FFF], p.bright);
+        }
+    }
 }

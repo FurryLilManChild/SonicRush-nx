@@ -1,3 +1,4 @@
+#include <chrono>
 // SonicRush-nx host boot test (from MPH-nx): install the native ARM9 engine before upstream
 // main() runs (the Switch build does this from nx_main.cpp).
 //   NR_DISABLE=1        leave it out: the ARM9 runs on upstream's interpreter
@@ -228,7 +229,19 @@ void play_hook(uint64_t cyc) {
                 static uint32_t wide[kSrnxWideMaxW * kSrnxWideMaxH];
                 SrnxWideParams pp = g_wide_p;
                 if (std::getenv("NR_WIDE_NOPASTE")) pp.main_valid = 0;
-                srnx_wide_draw_cpu(pp, g_wide_data.data(), wide, g_wide_p.view_w);
+                {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    for (int rep = 0; rep < 10; ++rep) srnx_wide_draw_cpu(pp, g_wide_data.data(), wide, g_wide_p.view_w);
+                    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 10;
+                    static uint32_t ref[kSrnxWideMaxW * kSrnxWideMaxH];
+                    const auto t1 = std::chrono::steady_clock::now();
+                    srnx_wide_draw_ref(pp, g_wide_data.data(), ref, g_wide_p.view_w);
+                    const double rms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count();
+                    size_t diff = 0;
+                    for (int i = 0; i < g_wide_p.view_w * g_wide_p.view_h; ++i) diff += ((ref[i] ^ wide[i]) & 0xFFFFFF) != 0;
+                    std::fprintf(stderr, "[srnx] wide CPU draw %dx%d: fast %.3f ms, reference %.2f ms, %zu pixels differ\n",
+                                 g_wide_p.view_w, g_wide_p.view_h, ms, rms, diff);
+                }
                 if (std::getenv("NR_WIDE_DATA"))
                     if (std::FILE* m = std::fopen((stem + ".wdata").c_str(), "wb")) {
                         std::fwrite(g_wide_data.data(), 1, g_wide_data.size(), m);

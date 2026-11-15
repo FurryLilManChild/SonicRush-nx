@@ -335,7 +335,10 @@ bool nx_present_init()
             .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
             .create();
         for (int i = 0; i < kSlots; ++i) g_wsnap_off[i] = i * snap_slot;
-        g_wide_shader_ok = NxDeko::LoadShader("WideStage", g_wide_shader);
+        // GPU drawing is off: switch-test4 to test7 never got the shader to run
+        // (stalls, then a GPU crash in its self-test). The CPU drawing is
+        // fast enough now and is what the stage view uses.
+        g_wide_shader_ok = false;
         if (g_wide_shader_ok) {
             dk::ImageLayout gl;
             dk::ImageLayoutMaker{dev}
