@@ -246,7 +246,7 @@ void wide_probe()
         // parameters and both buffers
         uint8_t* base = static_cast<uint8_t*>(g_wsnap_mem.getCpuAddr());
         SrnxWideParams pp{};
-        pp.view_w = 7; pp.view_h = 5; pp.off_spr = 0x1234; pp.pad[0] = 0xC0DEu;
+        pp.view_w = 7; pp.view_h = 5; pp.off_spr = 0x1234; pp.off_v3d = 0xC0DEu;
         uint32_t* outw = reinterpret_cast<uint32_t*>(base + kWParamsBytes + kSrnxDataBytes - 4096);
         for (int i = 0; i < 8; ++i) outw[i] = 0;
         *reinterpret_cast<uint32_t*>(base + kWParamsBytes) = 0xABCD1234u;
