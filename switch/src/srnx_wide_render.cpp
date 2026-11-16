@@ -66,6 +66,7 @@ int g_srnx_cam_lag = 2;   // host-checked: the DS screen just drawn matches the 
 
 
 namespace {
+constexpr uint32_t kOamShadow = 0x0208A2ECu;  // engine A OAM shadow (DMA source), host-verified
 constexpr uint32_t kCam = 0x0236AAD8u;      // camera records: main engine +0, other +0x64
 constexpr uint32_t kTargetPtr = 0x0236AC60u;
 constexpr int kGap = 272;
@@ -167,7 +168,7 @@ uint32_t rgb(uint16_t c) {
 // The game's camera as latched at each VBlank start, newest first. The frame
 // the DS has just drawn was framed by an earlier frame's camera
 // (g_srnx_cam_lag picks which; host-checked).
-struct Latch { int cam0x, cam0y, cam1y; float tx, ty; bool ok; };
+struct Latch { int cam0x, cam0y, cam1y; float tx, ty; bool ok; uint16_t bg1x, bg1y; };
 Latch g_latch[4];
 
 // cache of the level's block count (largest index in either layout + 1)
@@ -184,6 +185,11 @@ void srnx_wide_vblank() {
     l.ok = in_ram(tgt);
     l.tx = l.ok ? (float)((int32_t)NR_RD32(tgt + 0x10) >> 8) : 0.f;
     l.ty = l.ok ? (float)((int32_t)NR_RD32(tgt + 0x14) >> 8) : 0.f;
+    {   // switch-test17: the far background's scroll, latched with the camera
+        uint16_t bx[4], by[4]; int32_t rx[2], ry[2]; int16_t pm[8];
+        nds_gpu2d_debug_regs(0, bx, by, rx, ry, pm);
+        l.bg1x = bx[1]; l.bg1y = by[1];
+    }
     // switch-test14: the 3D geometry finished this frame was built for the
     // camera now in record 0; tag it so it is placed by level position (a
     // screen swap moves the DS screen, not the level).
@@ -281,8 +287,25 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     p.order[0] = ord[0]; p.order[1] = ord[1]; p.order[2] = ord[2]; p.order[3] = 4;
     uint16_t bgx[4], bgy[4]; int32_t rx[2], ry[2]; int16_t pm[8];
     nds_gpu2d_debug_regs(0, bgx, bgy, rx, ry, pm);
-    p.bg1_sx = bgx[1] + (wx - cam0x);
-    p.bg1_sy = bgy[1] + (wy - cam0y);
+    // switch-test17: scroll and camera from the same latch, and across a
+    // screen swap hold the last offset if it jumps (the game moves the far
+    // background and the camera on different frames there)
+    (void)bgx; (void)bgy;
+    {
+        static int prev_ox = 0, prev_oy = 0, hold = 0;
+        static unsigned last_swaps = 0;
+        int ox = (int)L.bg1x - cam0x, oy = (int)L.bg1y - cam0y;
+        if (g_srnx_cam_swaps != last_swaps) { last_swaps = g_srnx_cam_swaps; hold = 4; }
+        if (hold > 0) {
+            --hold;
+            auto wrapd = [](int d) { d %= 512; if (d > 256) d -= 512; if (d < -256) d += 512; return d; };
+            if (std::abs(wrapd(ox - prev_ox)) > 24 || std::abs(wrapd(oy - prev_oy)) > 24) { ox = prev_ox; oy = prev_oy; }
+        }
+        prev_ox = ox; prev_oy = oy;
+        p.bg1_sx = ox + wx;
+        p.bg1_sy = oy + wy;
+        bgy[1] = (uint16_t)(oy + cam0y);
+    }
     {   // The DS screen shows rows bgy..bgy+191 of the far background. When
         // that fits inside the picture without wrapping, the rows our taller
         // view adds above or below are not part of the picture: repeat the
@@ -313,7 +336,7 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
         uint8_t* af = data + p.off_spr + kSrnxAffOff;
         for (uint32_t g = 0; g < 32; ++g)
             for (uint32_t k = 0; k < 4; ++k) {
-                const uint16_t v = (uint16_t)(bus_read_u32_slow(0x07000000u + g * 32u + k * 8u + 4u) >> 16);
+                const uint16_t v = NR_RD16(kOamShadow + g * 32u + k * 8u + 6u);   // same frame as the sprite records
                 std::memcpy(af + (g * 4 + k) * 2, &v, 2);
             }
         const uint32_t bc = nds_gpu2d_read(0x04000050u, 2) & 0xFFFF, ba = nds_gpu2d_read(0x04000052u, 2) & 0xFFFF;
@@ -545,8 +568,8 @@ bool spr_pixel(const Src& s, uint32_t first, uint32_t count, int x, int y, uint1
         const uint32_t a0 = a01 & 0xFFFF, a1 = a01 >> 16;
         const int pr = (a2 >> 10) & 3;
         if (hit && pr >= prio) continue;
-        const bool rs = (a0 >> 8) & 1;
-        if (!rs && ((a0 >> 9) & 1)) continue;
+        const bool rs = i < p.nspr && ((a0 >> 8) & 1);   // HUD pieces: no rotation/scale
+        if (!((a0 >> 8) & 1) && ((a0 >> 9) & 1)) continue;
         if (((a0 >> 10) & 3) == 3) continue;
         const int shape = (a0 >> 14) & 3;
         if (shape == 3) continue;
@@ -718,8 +741,9 @@ void draw_sprites(const Src& s, uint32_t first, uint32_t count, int W, int H) {
         const int sx = (int32_t)s.u32(o), sy = (int32_t)s.u32(o + 4);
         const uint32_t a01 = s.u32(o + 8), a2 = s.u32(o + 12);
         const uint32_t a0 = a01 & 0xFFFF, a1 = a01 >> 16;
-        const bool rs = (a0 >> 8) & 1;
-        if (!rs && ((a0 >> 9) & 1)) continue;
+        const bool hud = (uint32_t)i >= p.nspr;   // HUD pieces: drawn without rotation/scale
+        const bool rs = !hud && ((a0 >> 8) & 1);
+        if (!((a0 >> 8) & 1) && ((a0 >> 9) & 1)) continue;
         if (((a0 >> 10) & 3) == 3) continue;
         const int shape = (a0 >> 14) & 3;
         if (shape == 3) continue;
