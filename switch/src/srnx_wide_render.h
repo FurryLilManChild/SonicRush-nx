@@ -31,6 +31,7 @@ struct SrnxWideParams {
     uint32_t bgcnt[4];
     uint32_t order[4];             // BGs back to front (bg index, 4 = none)
     int32_t bg1_sx, bg1_sy;        // far background scroll at the view's top-left
+    int32_t bg1_clamp;             // rows past the picture repeat its edge tile row instead of wrapping
     int32_t world_x, world_y;      // view's top-left in world pixels
     uint32_t layout_w[2], layout_h[2];
     uint32_t nspr;                 // world sprites, then HUD sprites

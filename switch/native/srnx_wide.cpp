@@ -14,6 +14,8 @@
 // completed with the slot's three OAM attributes and kept as the last whole
 // frame, which our wide renderer draws at true positions.
 #include "srnx_wide.h"
+#include <cstdlib>
+#include <cstdio>
 
 #include <cstdio>
 #include <cstring>
@@ -32,6 +34,7 @@ constexpr uint32_t kStage[2] = {0x0208A2D4u, 0x02088DACu};
 
 struct Frame {
     SrnxSprite s[SRNX_MAX_SPR];
+    uint32_t lr[SRNX_MAX_SPR], lr_multi[SRNX_MAX_SPR];   // who drew each sprite (debug)
     uint32_t n = 0;
     uint32_t base = 0;
     int32_t cam_x = 0, cam_y = 0;   // the camera the game placed this frame's sprites by (24.8)
@@ -64,6 +67,17 @@ void finish(int e) {
         f.s[i].attr1 = (uint16_t)(w0 >> 16);
         f.s[i].attr2 = (uint16_t)w1;
     }
+    if (g_srnx_obj_dbg > 0 && e == 0) {
+        --g_srnx_obj_dbg;
+        std::fprintf(stderr, "[obj] frame cam %d %d\n", (int32_t)bus_read_u32_slow(kCamRec[0] + 4) >> 8, (int32_t)bus_read_u32_slow(kCamRec[0] + 8) >> 8);
+    }
+    if (g_srnx_sprlog > 0 && e == 0) {
+        --g_srnx_sprlog;
+        std::fprintf(stderr, "[sprlog] frame cam %d,%d n %u\n", f.cam_x >> 8, f.cam_y >> 8, f.n);
+        for (uint32_t i = 0; i < f.n; ++i)
+            std::fprintf(stderr, "[sprlog]  x %5d y %5d hud %d lr %08X multi %08X a2 %04X\n", f.s[i].x >> 12, f.s[i].y >> 12,
+                         (f.s[i].slot >> 15) & 1, f.lr[i], f.lr_multi[i], f.s[i].attr2);
+    }
     g_last[e] = f;
     f.n = 0;
     ++g_frames[e];
@@ -71,13 +85,56 @@ void finish(int e) {
 }  // namespace
 
 extern "C" {
+// HUD sprites: drawn screen-fixed by the HUD code (set from host measurements)
+int srnx_is_hud_caller(int routine, uint32_t lr, uint32_t lr_multi) {
+    // The stage overlay's HUD block (score, time, rings, tension gauge, lives)
+    // draws through the multi-part routine from 0x02335F00..0x02337000; the
+    // gauge's middle pieces come straight from routine 0 at lr 0x02032468.
+    // Both measured screen-fixed over 500 frames of play.
+    if (routine == 1 && lr == 0x02032D14u) return lr_multi >= 0x02335F00u && lr_multi < 0x02337000u;
+    if (routine == 0) return lr == 0x02032468u;
+    return 0;
+}
 int g_srnx_wide = 0;
 int g_srnx_wide_l = 284, g_srnx_wide_r = 285, g_srnx_wide_t = 0, g_srnx_wide_b = 272;
 uint32_t g_srnx_spr_overflow = 0;
 int g_srnx_act_l = 0, g_srnx_act_r = 0, g_srnx_act_t = 0, g_srnx_act_b = 0;
+int g_srnx_act_dbg = 0;
+int g_srnx_keep_margin = 0;
+unsigned long long g_srnx_send_calls[4], g_srnx_send_words[4];
+void srnx_send_debug(uint32_t src, uint32_t dst, uint32_t bytes, uint32_t lr) {
+    const int k = dst == 0x04000400u ? 0 : (dst >= 0x04000000u && dst < 0x05000000u ? 1 : 2);
+    ++g_srnx_send_calls[k]; g_srnx_send_words[k] += bytes / 4;
+    static int shown = 0;
+    if (std::getenv("NR_SEND_DBG") && shown < 40) { ++shown; std::fprintf(stderr, "[send] src %08X dst %08X bytes %u lr %08X\n", src, dst, bytes, lr); }
+}
+int g_srnx_obj_dbg = 0;   // host: frames of object step/draw logging left
+void srnx_obj_debug(int kind, uint32_t obj) {
+    if (g_srnx_obj_dbg <= 0) return;
+    std::fprintf(stderr, "[obj] %c %08X x %d y %d f54 %08X f5c %04X cb70 %08X\n", kind ? 'D' : 'S', obj,
+                 (int32_t)bus_read_u32_slow(obj + 0x10) >> 8, (int32_t)bus_read_u32_slow(obj + 0x14) >> 8,
+                 bus_read_u32_slow(obj + 0x54), bus_read_u32_slow(obj + 0x5c) & 0xFFFF, bus_read_u32_slow(obj + 0x70));
+}
+void srnx_act_debug(uint32_t sp, uint32_t r0, uint32_t r1) {
+    if (g_srnx_act_dbg <= 0) return;
+    --g_srnx_act_dbg;
+    std::fprintf(stderr, "[act] rect x0 %d y0 %d x1 %d (r0 %d r1 %d) ext l%d r%d t%d b%d wide %d\n",
+                 (int32_t)bus_read_u32_slow(sp + 0x20), (int32_t)bus_read_u32_slow(sp + 0x24), (int32_t)bus_read_u32_slow(sp + 0x28),
+                 (int32_t)r0, (int32_t)r1, g_srnx_act_l, g_srnx_act_r, g_srnx_act_t, g_srnx_act_b, g_srnx_wide);
+}
 int g_srnx_hide_hud = 0;
 static int g_ctx_hud = 0;
+static uint32_t g_ctx_lr = 0, g_ctx_lr_multi = 0;
+int g_srnx_sprlog = 0;          // host: print this many frames of records with their callers
 void srnx_spr_ctx(int hud) { g_ctx_hud = hud; }
+// routine 0 = 0x02032480, 1 = 0x02032D2C, 2 = 0x02032C8C (multi-part, calls 1)
+void srnx_spr_enter(int routine, uint32_t lr) {
+    if (routine == 2) { g_ctx_lr_multi = lr; return; }
+    g_ctx_lr = lr;
+    if (routine == 1 && lr != 0x02032D14u) g_ctx_lr_multi = 0;   // called directly, not via 0x02032C8C
+    if (routine == 0) g_ctx_lr_multi = 0;
+    g_ctx_hud = srnx_is_hud_caller(routine, lr, g_ctx_lr_multi);
+}
 
 // Set by a clip hook for the sprite about to be allocated: whether it lies on
 // the DS screen. A sprite kept only for the wide view is pushed off the DS
@@ -122,6 +179,8 @@ uint32_t srnx_spr_record(uint32_t slot, uint32_t x, uint32_t y, uint32_t mgr) {
     }
     f.base = base;
     if (f.n >= SRNX_MAX_SPR) { ++g_srnx_spr_overflow; return y; }
+    f.lr[f.n] = g_ctx_lr;
+    f.lr_multi[f.n] = g_ctx_lr_multi;
     SrnxSprite& s = f.s[f.n++];
     s.slot = (uint16_t)(idx | (g_ctx_hud ? 0x8000 : 0));
     s.x = (int32_t)x;

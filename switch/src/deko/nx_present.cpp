@@ -420,6 +420,47 @@ bool nx_present_init()
 }
 
 namespace {
+// Share of the DS screen (sparse grid) that the stage view draws differently,
+// against whichever DS screen matches best. Play measures 0.00 (blips to 0.34),
+// act title cards 0.85 to 1.00 (host, 2026-11-15). Hysteresis: 3 frames above
+// 0.6 to switch to the original screens, 8 frames below 0.2 to switch back.
+bool wide_mismatch(const SrnxWideParams& p, const uint32_t* view, const uint32_t* top, const uint32_t* bottom)
+{
+    static bool fallback = false;
+    static int run = 0;
+    float best = 1.0f;
+    for (const uint32_t* ds : {top, bottom}) {
+        if (!ds) continue;
+        int n = 0, diff = 0;
+        for (int y = 2; y < 192; y += 6) {
+            const int vy = p.main_y + y;
+            if (vy < 0 || vy >= p.view_h) continue;
+            for (int x = 2; x < 256; x += 6) {
+                const int vx = p.main_x + x;
+                if (vx < 0 || vx >= p.view_w) continue;
+                const uint32_t a = view[(size_t)vy * kWideMaxW + vx], b = ds[y * 256 + x];
+                const int d = std::abs((int)((a >> 16) & 255) - (int)((b >> 16) & 255)) +
+                              std::abs((int)((a >> 8) & 255) - (int)((b >> 8) & 255)) + std::abs((int)(a & 255) - (int)(b & 255));
+                ++n;
+                diff += d > 24;
+            }
+        }
+        if (n > 200) best = std::min(best, (float)diff / n);
+    }
+    const bool want = fallback ? best > 0.2f : best > 0.6f;
+    if (want != fallback) {
+        if (++run >= (fallback ? 8 : 3)) {
+            fallback = want;
+            run = 0;
+            std::fprintf(stderr, "[present] stage view %s (DS screen mismatch %.2f)\n",
+                         fallback ? "paused: showing the original screens" : "resumed", best);
+        }
+    } else {
+        run = 0;
+    }
+    return fallback;
+}
+
 void present_now(const NxPresentFrame& f)
 {
     uint64_t t0 = armGetSystemTick();
@@ -475,6 +516,10 @@ void present_now(const NxPresentFrame& f)
             }
         } else {
             srnx_wide_draw_cpu(wp, f.wide_data, g_wide_cpu[slot], kWideMaxW);
+            // Act title cards and other full-screen pictures live in layers
+            // the stage view does not draw. When the view stops matching the
+            // DS screen it covers, show the original screens instead.
+            if (wide_mismatch(wp, g_wide_cpu[slot], f.top, f.bottom)) goto original_screens;
         }
         // black edges, then the view at the largest scale that fits (whole
         // numbers stay pixel-sharp: 424x240 is exactly 3x on 720p)
@@ -526,6 +571,7 @@ void present_now(const NxPresentFrame& f)
         g_stat_wide++;
         return;
     }
+original_screens:
     uint32_t* top = g_src_cpu[slot][0];
     uint32_t* bottom = g_src_cpu[slot][1];
     uint32_t* hud = g_src_cpu[slot][2];

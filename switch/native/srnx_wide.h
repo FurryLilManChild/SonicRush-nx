@@ -17,6 +17,13 @@ typedef struct SrnxSprite {
 extern int g_srnx_wide;       // wide view active: hooks widen the clip
 extern int g_srnx_wide_l, g_srnx_wide_r, g_srnx_wide_t, g_srnx_wide_b;   // extra pixels around the 256x192 view
 extern uint32_t g_srnx_spr_overflow;
+void srnx_act_debug(uint32_t sp, uint32_t r0, uint32_t r1);
+extern int g_srnx_act_dbg;
+extern int g_srnx_keep_margin;
+void srnx_send_debug(uint32_t src, uint32_t dst, uint32_t bytes, uint32_t lr);
+extern unsigned long long g_srnx_send_calls[4], g_srnx_send_words[4];
+extern int g_srnx_obj_dbg;
+void srnx_obj_debug(int kind, uint32_t obj);
 extern int g_srnx_act_l, g_srnx_act_r, g_srnx_act_t, g_srnx_act_b;   // object activation widening (pixels)
 extern int g_srnx_hide_hud;     // wide view: keep HUD sprites out of the DS picture
 
@@ -26,6 +33,9 @@ int srnx_spr_box(int32_t x0, int32_t x1, int32_t y0, int32_t y1, uint32_t mgr);
 // screen when the sprite is only in the wide view).
 uint32_t srnx_spr_record(uint32_t slot, uint32_t x, uint32_t y, uint32_t mgr);
 void srnx_spr_ctx(int hud);
+void srnx_spr_enter(int routine, uint32_t lr);
+int srnx_is_hud_caller(int routine, uint32_t lr, uint32_t lr_multi);
+extern int g_srnx_sprlog;
 uint32_t srnx_spr_last(int engine, const SrnxSprite** out);
 uint32_t srnx_spr_frames(int engine);
 // camera (24.8) the last whole frame's sprites were placed by

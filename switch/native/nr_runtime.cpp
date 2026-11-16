@@ -303,6 +303,12 @@ extern "C" void nr_service(void) {
     }
     const uint32_t resume = g_cpu.R[15];
     g_nr_last_pc = resume | ((g_cpu.cpsr & CPSR_T_BIT) ? 1u : 0u);
+#if defined(SRNX_HOST_PROFILE)
+    {   // host diagnostic: where services happen (NR_SVC_HIST=1)
+        static int on = -1; if (on < 0) on = std::getenv("NR_SVC_HIST") ? 1 : 0;
+        if (on) { extern void nr_svc_hist_note(uint32_t pc); nr_svc_hist_note(resume); }
+    }
+#endif
     if (runtime_should_yield_slow()) {
         // Slice over, CPU halted, DMA owns the bus, or terminal: back to the
         // scheduler. It resumes us at the next ARM9 slice.

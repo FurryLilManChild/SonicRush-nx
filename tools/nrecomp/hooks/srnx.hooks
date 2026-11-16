@@ -24,9 +24,12 @@ r9 = (uint32_t)((int32_t)srnx_spr_record(r0, r8 << 12, r9 << 12, NR_LDR32(r10)) 
 # Who is drawing: the animated sprite routine called from 0x02032C8C (lr 0x02032D14)
 # draws the HUD (score, time, rings, lives); everything else is the stage.
 @02032D2C
-srnx_spr_ctx(r14 == 0x02032D14u);
+srnx_spr_enter(1, r14);
 @02032480
-srnx_spr_ctx(0);
+srnx_spr_enter(0, r14);
+# caller of the multi-part routine 0x02032C8C (it calls 0x02032D2C per part)
+@02032C8C
+srnx_spr_enter(2, r14);
 # Object activation (overlay 0, 0x02334EB4): the area around the camera in
 # which the game brings objects to life is [sp+0x20] x0, [sp+0x24] y0,
 # [sp+0x28] x1 and y1 = r1 + (r2 >> 8) (computed next); with the stage view
@@ -35,3 +38,15 @@ srnx_spr_ctx(0);
 if (g_srnx_wide) { r0 -= (uint32_t)g_srnx_act_l; NR_WR32(r13 + 0x20u, r0);
   NR_WR32(r13 + 0x24u, NR_RD32(r13 + 0x24u) - (uint32_t)g_srnx_act_t);
   NR_WR32(r13 + 0x28u, NR_RD32(r13 + 0x28u) + (uint32_t)g_srnx_act_r); r1 += (uint32_t)g_srnx_act_b; }
+# Its per-screen twin (overlay 0, 0x023350C0: one camera record, 192 rows),
+# same rect layout; widened the same way.
+@ov00:023351B8
+if (g_srnx_wide) { r0 -= (uint32_t)g_srnx_act_l; NR_WR32(r13 + 0x20u, r0);
+  NR_WR32(r13 + 0x24u, NR_RD32(r13 + 0x24u) - (uint32_t)g_srnx_act_t);
+  NR_WR32(r13 + 0x28u, NR_RD32(r13 + 0x28u) + (uint32_t)g_srnx_act_r); r1 += (uint32_t)g_srnx_act_b; }
+# Object keep-alive range check (main 0x02068E58): an object outside the DS
+# view plus margin r2 (default 64 px) is flagged for deletion (obj+0x54 bit 4)
+# every frame, so objects spawned by the widened scanners died before drawing.
+# Widen the margin to cover the stage view.
+@02068EB4
+if (g_srnx_wide) r2 += (uint32_t)g_srnx_keep_margin;

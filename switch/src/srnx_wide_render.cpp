@@ -51,6 +51,7 @@ uint32_t nds_vram_read_obj(int engine, uint32_t addr, uint32_t width);
 const uint32_t* nds_gpu2d_srnx_3d_frame(uint32_t* frames);
 
 int g_srnx_zoom = 0;
+int g_srnx_act_extra = 0, g_srnx_act_off = 0;   // host experiments
 int g_srnx_cam_lag = 2;   // host-checked: the DS screen just drawn matches the camera two VBlanks back
 
 
@@ -223,10 +224,11 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     g_srnx_wide_b = std::max(0, wy + VH - (cam0y + 192)) + kMargin;
     // object activation (hook in overlay 0): the same area, with room to spare
     // so objects come alive before they scroll into view
-    g_srnx_act_l = g_srnx_wide_l + 32;
-    g_srnx_act_r = g_srnx_wide_r + 32;
-    g_srnx_act_t = g_srnx_wide_t + 32;
-    g_srnx_act_b = g_srnx_wide_b + 32;
+    g_srnx_act_l = g_srnx_act_off ? 0 : g_srnx_wide_l + 32 + g_srnx_act_extra;
+    g_srnx_act_r = g_srnx_act_off ? 0 : g_srnx_wide_r + 32 + g_srnx_act_extra;
+    g_srnx_act_t = g_srnx_act_off ? 0 : g_srnx_wide_t + 32 + g_srnx_act_extra;
+    g_srnx_act_b = g_srnx_act_off ? 0 : g_srnx_wide_b + 32 + g_srnx_act_extra;
+    g_srnx_keep_margin = std::max(std::max(g_srnx_act_l, g_srnx_act_r), std::max(g_srnx_act_t, g_srnx_act_b));
 
     p.view_w = VW;
     p.view_h = VH;
@@ -247,6 +249,14 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     nds_gpu2d_debug_regs(0, bgx, bgy, rx, ry, pm);
     p.bg1_sx = bgx[1] + (wx - cam0x);
     p.bg1_sy = bgy[1] + (wy - cam0y);
+    {   // The DS screen shows rows bgy..bgy+191 of the far background. When
+        // that fits inside the picture without wrapping, the rows our taller
+        // view adds above or below are not part of the picture: repeat the
+        // edge tile row (sky above) instead of wrapping to the other side.
+        const int lh = (p.bgcnt[1] & 0x8000) ? 512 : 256;
+        const int dsy = bgy[1] & 511;
+        p.bg1_clamp = (dsy + 192 <= lh) ? 1 : 0;
+    }
     p.bright = nds_gpu2d_read(0x0400006Cu, 4) & 0xFFFF;
 
     // data block
@@ -319,7 +329,9 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
                 // the game put it, and only the lives counter (bottom of the
                 // screen) moves to the view's bottom edge. (switch-test8 moved
                 // right-half pieces right, which split the score and time.)
-                if (y >= 160) y += VH - 192;
+                // The tension gauge's lowest piece (x 1, y 170) stays with the
+                // gauge; only the lives counter (x 20/32, y 176) moves.
+                if (y >= 172 && x >= 12) y += VH - 192;
             } else {
                 x += spr_ox;
                 y += spr_oy;
@@ -372,6 +384,16 @@ const int kSz[3][4][2] = {{{8, 8}, {16, 16}, {32, 32}, {64, 64}},
                           {{8, 16}, {8, 32}, {16, 32}, {32, 64}}};
 
 // one BG's colour at view pixel (x, y); false = transparent
+static inline int bg1_row(const SrnxWideParams& p, int y, int lh) {
+    int r = y + p.bg1_sy;
+    if (p.bg1_clamp) {
+        if (r < 0) return ((r % 8) + 8) % 8;
+        if (r >= lh) return lh - 8 + (r & 7);
+        return r;
+    }
+    return ((r % lh) + lh) % lh;
+}
+
 bool bg_pixel(const Src& s, int bg, int x, int y, uint16_t& col) {
     const SrnxWideParams& p = s.p;
     const uint32_t c = p.bgcnt[bg];
@@ -380,7 +402,7 @@ bool bg_pixel(const Src& s, int bg, int x, int y, uint16_t& col) {
     if (bg == 1) {
         const int size = (c >> 14) & 3;
         const int lw = (size & 1) ? 512 : 256, lh = (size & 2) ? 512 : 256;
-        const int xx = (((x + p.bg1_sx) % lw) + lw) % lw, yy = (((y + p.bg1_sy) % lh) + lh) % lh;
+        const int xx = (((x + p.bg1_sx) % lw) + lw) % lw, yy = bg1_row(p, y, lh);
         const int tx = xx >> 3, ty = yy >> 3;
         uint32_t sb = 0;
         if (lw == 512 && tx >= 32) sb += 1;
@@ -655,7 +677,7 @@ void srnx_wide_draw_cpu(const SrnxWideParams& p, const uint8_t* data, uint32_t* 
             const uint32_t mapbase = map_off + ((c >> 8) & 31) * 0x800u;
             const bool b8 = c & 0x80;
             for (int y = 0; y < H; ++y) {
-                const int yy = (y + p.bg1_sy) & (lh - 1);
+                const int yy = bg1_row(p, y, lh);
                 const int ty = yy >> 3, py0 = yy & 7;
                 uint32_t* o = out + (size_t)y * pitch;
                 uint8_t* k = g_key + (size_t)y * W;

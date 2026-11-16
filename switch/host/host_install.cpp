@@ -26,7 +26,8 @@ extern bool g_nx_dma_block;
 #include "../native/nr_state.h"
 #include "../native/srnx_wide.h"
 #include "../src/srnx_wide_render.h"
-extern double g_snap_part[8];   // srnx_wide_render.cpp, SRNX_HOST_PROFILE
+extern double g_snap_part[8];
+extern int g_srnx_act_extra, g_srnx_act_off;   // srnx_wide_render.cpp   // srnx_wide_render.cpp, SRNX_HOST_PROFILE
 extern void (*g_nx_host_round_hook)(uint64_t arm9_cycles);
 
 void nds_set_key_mask(uint32_t mask);   // io.cpp
@@ -39,6 +40,19 @@ const uint8_t* nds_vram_palette_live();
 uint32_t nds_gpu2d_read(uint32_t addr, uint32_t width);
 void nds_gpu2d_debug_regs(int e, uint16_t bgx[4], uint16_t bgy[4], int32_t refx[2], int32_t refy[2], int16_t pabcd[8]);
 extern unsigned long long g_srnx_gx_busy_skips, g_srnx_gx_busy_reads;   // gpu3d.cpp
+#include <unordered_map>
+#include <algorithm>
+static std::unordered_map<uint32_t, unsigned long long> g_svc_hist;
+extern "C" void nr_svc_hist_note(uint32_t pc) { ++g_svc_hist[pc]; }
+static void svc_hist_print() {
+    if (g_svc_hist.empty()) return;
+    std::vector<std::pair<unsigned long long, uint32_t>> v;
+    unsigned long long tot = 0;
+    for (auto& kv : g_svc_hist) { v.push_back({kv.second, kv.first}); tot += kv.second; }
+    std::sort(v.rbegin(), v.rend());
+    std::fprintf(stderr, "[svc] total %llu\n", tot);
+    for (size_t i = 0; i < v.size() && i < 25; ++i) std::fprintf(stderr, "[svc] %08X %llu\n", v[i].second, v[i].first);
+}
 extern bool g_srnx_gx_skip;
 extern void (*g_srnx_vblank_hook)();
 
@@ -87,6 +101,7 @@ void dump_words(const char* d);
 void dump_at_exit() {
     gpu2d_stats_at_exit();
     std::fprintf(stderr, "[srnx] 3D busy reads %llu, skips %llu\n", g_srnx_gx_busy_reads, g_srnx_gx_busy_skips);
+    svc_hist_print();
     shot_at_exit();
     if (!std::getenv("NR_DUMP_AT")) dump_words(std::getenv("NR_DUMP"));
 }
@@ -265,6 +280,7 @@ void play_hook(uint64_t cyc) {
             } else {
                 std::fprintf(stderr, "[srnx] wide view: not a stage\n");
             }
+            srnx_alloc_report();
             std::fprintf(stderr, "[srnx] sprites main %u sub %u frames %u/%u mgr %08X/%08X overflow %u\n",
                          srnx_spr_last(0, &g_spr_tmp), srnx_spr_last(1, &g_spr_tmp),
                          srnx_spr_frames(0), srnx_spr_frames(1), srnx_spr_mgr(0), srnx_spr_mgr(1), g_srnx_spr_overflow);
@@ -350,6 +366,12 @@ struct Install {
         g_load_step = parse_step(std::getenv("NR_STATE_LOAD"));
         if (std::getenv("SRNX_NOSKIP")) g_srnx_gx_skip = false;
         if (const char* w = std::getenv("NR_WIDE")) g_srnx_wide = w[0] == '1';
+        {
+          if (const char* w = std::getenv("NR_ACT_EXTRA")) g_srnx_act_extra = std::atoi(w);
+          if (std::getenv("NR_ACT_OFF")) g_srnx_act_off = 1;
+          if (const char* w = std::getenv("NR_ACT_DBG")) g_srnx_act_dbg = std::atoi(w);
+          if (const char* w = std::getenv("NR_OBJ_DBG")) g_srnx_obj_dbg = std::atoi(w); }
+        if (const char* w = std::getenv("NR_SPRLOG")) g_srnx_sprlog = std::atoi(w);
         if (const char* w = std::getenv("NR_WIDE_LAG")) g_srnx_cam_lag = std::atoi(w);
         if (const char* w = std::getenv("NR_WIDE_ZOOM")) g_srnx_zoom = std::atoi(w);
         g_srnx_vblank_hook = wide_vblank;
