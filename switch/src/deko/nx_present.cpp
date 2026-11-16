@@ -422,8 +422,9 @@ bool nx_present_init()
 namespace {
 // Share of the DS screen (sparse grid) that the stage view draws differently,
 // against whichever DS screen matches best. Play measures 0.00 (blips to 0.34),
-// act title cards 0.85 to 1.00 (host, 2026-11-15). Hysteresis: 3 frames above
-// 0.6 to switch to the original screens, 8 frames below 0.2 to switch back.
+// act title cards 0.85 to 1.00 (host, 2026-11-15). switch-test10 tripped at
+// 0.67/0.70 while Sonic crossed DS screens, so: 6 frames above 0.82 to switch
+// to the original screens, 8 frames below 0.2 to switch back.
 bool wide_mismatch(const SrnxWideParams& p, const uint32_t* view, const uint32_t* top, const uint32_t* bottom)
 {
     static bool fallback = false;
@@ -447,9 +448,9 @@ bool wide_mismatch(const SrnxWideParams& p, const uint32_t* view, const uint32_t
         }
         if (n > 200) best = std::min(best, (float)diff / n);
     }
-    const bool want = fallback ? best > 0.2f : best > 0.6f;
+    const bool want = fallback ? best > 0.2f : best > 0.82f;
     if (want != fallback) {
-        if (++run >= (fallback ? 8 : 3)) {
+        if (++run >= (fallback ? 8 : 6)) {
             fallback = want;
             run = 0;
             std::fprintf(stderr, "[present] stage view %s (DS screen mismatch %.2f)\n",

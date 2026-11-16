@@ -3187,7 +3187,7 @@ index 991071a..f086d1b 100644
  // into guest VRAM has not been applied yet. Guest READS of VRAM must fence on
  // this; guest writes already fence on nds_gpu2d_jobs_outstanding.
 diff --git a/runner/src/gpu3d.cpp b/runner/src/gpu3d.cpp
-index b44d08d..f4905d8 100644
+index b44d08d..f966327 100644
 --- a/runner/src/gpu3d.cpp
 +++ b/runner/src/gpu3d.cpp
 @@ -8,6 +8,7 @@
@@ -3232,7 +3232,7 @@ index b44d08d..f4905d8 100644
  void nds_gpu3d_restore_soft_renderer() {
      nds_gpu3d_use_soft_renderer(g_soft_threaded);
  }
-@@ -1206,6 +1225,14 @@ bool nds_gpu3d_reg_addr(uint32_t addr) {
+@@ -1206,6 +1225,17 @@ bool nds_gpu3d_reg_addr(uint32_t addr) {
             (addr >= 0x04000320u && addr < 0x040006A4u);
  }
  
@@ -3241,13 +3241,16 @@ index b44d08d..f4905d8 100644
 +unsigned long long g_srnx_gx_busy_skips = 0;
 +unsigned long long g_srnx_gx_busy_reads = 0;
 +bool g_srnx_gx_skip = true;
++bool g_srnx_gx_halt = true;
++unsigned long long g_srnx_gx_halts = 0;
++uint32_t nds_irq_enabled(int cpu);
 +// Geometry engine busy (GXSTAT bit 27) as of its last sync; no catch-up.
 +bool nds_gpu3d_busy_now() { return (g_nds.GPU.GPU3D.GXStat & (1u << 27)) != 0; }
 +#endif
  uint32_t nds_gpu3d_read(uint32_t addr, uint32_t width) {
      // melonDS ARM9Timestamp is live during ARM9.Execute, and GXSTAT reads
      // sync the engine to it (GPU3D::Read32 case 0x600 calls Run()). These
-@@ -1215,11 +1242,36 @@ uint32_t nds_gpu3d_read(uint32_t addr, uint32_t width) {
+@@ -1215,11 +1245,46 @@ uint32_t nds_gpu3d_read(uint32_t addr, uint32_t width) {
      // guest poll loops (found via the gx_run/gx_write ring diff, SM64DS
      // 3D init at insn9=55.8M).
      g_nds.ARM9Timestamp = g_runtime_cycles;
@@ -3273,7 +3276,17 @@ index b44d08d..f4905d8 100644
 +        if (g_srnx_gx_skip && (g3.GXStat & (1u << 27))) {
 +            ++g_srnx_gx_busy_skips;
 +            if (g3.FlushRequest) {
-+                if (g_nds_fast_limit > g_runtime_cycles) g_runtime_cycles = g_nds_fast_limit;
++                // switch-test11: the game polls GXSTAT after SwapBuffers until
++                // the swap at VBlank. Jumping to the slice end cost 4,000 to
++                // 6,500 polls a frame on the Switch; halt until an interrupt
++                // instead (VBlank enabled in IE guarantees a wake).
++                if (g_srnx_gx_halt && (nds_irq_enabled(0) & 1u)) {
++                    ++g_srnx_gx_halts;
++                    nds_cpu_enter_halt(0);
++                    runtime_clear_fast_limit();
++                } else if (g_nds_fast_limit > g_runtime_cycles) {
++                    g_runtime_cycles = g_nds_fast_limit;
++                }
 +            } else {
 +                const uint64_t need = (uint64_t)std::max<int32_t>(1, g3.CyclesToRunFor()) << g_nds.ARM9ClockShift;
 +                g_runtime_cycles += need;
@@ -3287,7 +3300,7 @@ index b44d08d..f4905d8 100644
  }
  
  void nds_gpu3d_write(uint32_t addr, uint32_t value, uint32_t width) {
-@@ -1367,7 +1419,15 @@ void nds_gpu3d_vcount144() {
+@@ -1367,7 +1432,15 @@ void nds_gpu3d_vcount144() {
      ++g_gpu3d_profile.vcount144_calls;
  }
  
@@ -3348,7 +3361,7 @@ index 56dbb80..2640c44 100644
  
      if (info.cpu_brand.empty()) info.cpu_brand = "unknown";
 diff --git a/runner/src/io.cpp b/runner/src/io.cpp
-index 20544a0..07aa75e 100644
+index 20544a0..3893bf4 100644
 --- a/runner/src/io.cpp
 +++ b/runner/src/io.cpp
 @@ -1,5 +1,6 @@
@@ -3634,7 +3647,15 @@ index 20544a0..07aa75e 100644
      bus_fast_refresh();
      return true;
  }
-@@ -2957,7 +3051,14 @@ bool nds_dma_cpu_stalled(int cpu) { return dma_any_running(cpu & 1); }
+@@ -2926,6 +3020,7 @@ uint32_t nds_irq_pending(int cpu) {
+ }
+ 
+ bool nds_cpu_halted(int cpu) { return g_cpu_halted[cpu & 1]; }
++uint32_t nds_irq_enabled(int cpu) { return g_ie[cpu & 1]; }
+ 
+ void nds_cpu_enter_halt(int cpu) {
+     cpu &= 1;
+@@ -2957,7 +3052,14 @@ bool nds_dma_cpu_stalled(int cpu) { return dma_any_running(cpu & 1); }
  // GXFIFO ARM9 stall flag (melonDS CPUStop_GXStall). Set/cleared by the
  // vendored GPU3D via the NDS shim; scheduler consumption lands with the
  // geometry engine's Run() wiring (3D Phase 2).
@@ -3650,7 +3671,7 @@ index 20544a0..07aa75e 100644
  bool nds_gxfifo_stalled() { return g_gxfifo_stall; }
  
  unsigned long long nds_dma_entry_cycle(int cpu) {
-@@ -2973,6 +3074,10 @@ void nds_dma_trigger(int cpu, uint32_t start_mode) {
+@@ -2973,6 +3075,10 @@ void nds_dma_trigger(int cpu, uint32_t start_mode) {
      }
  }
  
@@ -3661,7 +3682,7 @@ index 20544a0..07aa75e 100644
  void nds_dma_run(int cpu, unsigned long long target_cycles) {
      cpu &= 1;
      // EXACT, not round-sampled. The scheduler only calls this after
-@@ -3040,6 +3145,41 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
+@@ -3040,6 +3146,41 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
                  if (!request_units || nds_gxfifo_stalled()) break;
                  continue;
              }
@@ -3703,7 +3724,7 @@ index 20544a0..07aa75e 100644
  #endif
              const uint32_t unit = dma_unit_cycles(cpu, d, width);
              g_runtime_cycles += uint64_t{unit} << (cpu == 0 ? 1u : 0u);
-@@ -3067,11 +3207,11 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
+@@ -3067,11 +3208,11 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
                  // The card asserts a distinct DMA request for each 32-bit word.
                  // Suspend this channel without completing or reloading it; the
                  // next data-ready event resumes the pending transaction.
@@ -3717,7 +3738,7 @@ index 20544a0..07aa75e 100644
                  nds_gpu3d_check_fifo_dma();
              }
              continue;
-@@ -3087,7 +3227,7 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
+@@ -3087,7 +3228,7 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
              // or the native/ndsref counters silently drift apart.
              ++g_counts.dma_done;
          }
@@ -3726,7 +3747,7 @@ index 20544a0..07aa75e 100644
          d.in_progress = false;
          brk_check();
      }
-@@ -3232,6 +3372,7 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
+@@ -3232,6 +3373,7 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
              unsigned long long extra = ticks / reload_span;
              T.counter = static_cast<uint16_t>(T.reload + (ticks % reload_span));
              carry = 1 + extra;                                 // overflows this round
@@ -3734,7 +3755,7 @@ index 20544a0..07aa75e 100644
              if (T.ctrl & 0x40u) {
                  g_counts.timer_ovf += carry;
                  nds_raise_irq(cpu, 1u << (3 + t));
-@@ -3240,11 +3381,97 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
+@@ -3240,11 +3382,97 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
      }
  }
  
@@ -3832,7 +3853,7 @@ index 20544a0..07aa75e 100644
      if (cpu == 0 && gpu2d_reg_addr(addr))
          return nds_gpu2d_read(addr, width) & m;
      if (addr >= 0x04000130u && addr < 0x04000134u) {
-@@ -3346,6 +3573,38 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3346,6 +3574,38 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
              return addr == 0x040001A2u ? (auxspi_read_data() & m) : 0u;
          case 0x040001A4: case 0x040001A5:
          case 0x040001A6: case 0x040001A7:
@@ -3871,7 +3892,7 @@ index 20544a0..07aa75e 100644
              return (g_romctrl >> ((addr & 3u) * 8)) & m;
          case 0x04000184: case 0x04000185:  // IPCFIFOCNT
              return (fifocnt_read(cpu) >> ((addr & 1u) * 8)) & m;
-@@ -3366,6 +3625,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3366,6 +3626,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
                  word = card_response_word(g_card_transfer_pos);
                  g_romctrl &= ~0x00800000u;
                  g_card_transfer_pos += 4u;
@@ -3895,7 +3916,7 @@ index 20544a0..07aa75e 100644
                  if (g_card_transfer_pos < g_card_transfer_len) {
                      const uint32_t xfercycle =
                          (g_romctrl & 0x08000000u) ? 8u : 5u;
-@@ -3399,8 +3675,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3399,8 +3676,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
  }
  
  void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
@@ -3919,7 +3940,7 @@ index 20544a0..07aa75e 100644
      if (card_register_address(addr) && !card_owned_by(cpu)) return;
      if (cpu == 0 && gpu2d_reg_addr(addr)) {
          nds_gpu2d_write(addr, value, width);
-@@ -3483,6 +3774,7 @@ void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
+@@ -3483,6 +3775,7 @@ void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
              T.ctrl = newctrl;
              if (now_on && !was_on) { T.counter = T.reload; T.accum = 0; }
          }

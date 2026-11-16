@@ -39,7 +39,7 @@ uint32_t nds_vram_read_obj_extpal(int engine, uint32_t addr, uint32_t width);
 const uint8_t* nds_vram_palette_live();
 uint32_t nds_gpu2d_read(uint32_t addr, uint32_t width);
 void nds_gpu2d_debug_regs(int e, uint16_t bgx[4], uint16_t bgy[4], int32_t refx[2], int32_t refy[2], int16_t pabcd[8]);
-extern unsigned long long g_srnx_gx_busy_skips, g_srnx_gx_busy_reads;   // gpu3d.cpp
+extern unsigned long long g_srnx_gx_busy_skips, g_srnx_gx_busy_reads, g_srnx_gx_halts;   // gpu3d.cpp
 #include <unordered_map>
 #include <algorithm>
 static std::unordered_map<uint32_t, unsigned long long> g_svc_hist;
@@ -100,7 +100,7 @@ void gpu2d_stats_at_exit() {
 void dump_words(const char* d);
 void dump_at_exit() {
     gpu2d_stats_at_exit();
-    std::fprintf(stderr, "[srnx] 3D busy reads %llu, skips %llu\n", g_srnx_gx_busy_reads, g_srnx_gx_busy_skips);
+    std::fprintf(stderr, "[srnx] 3D busy reads %llu, skips %llu, halts %llu\n", g_srnx_gx_busy_reads, g_srnx_gx_busy_skips, g_srnx_gx_halts);
     svc_hist_print();
     shot_at_exit();
     if (!std::getenv("NR_DUMP_AT")) dump_words(std::getenv("NR_DUMP"));
