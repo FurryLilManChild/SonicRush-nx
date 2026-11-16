@@ -29,6 +29,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "../native/nr_runtime.h"
@@ -107,21 +109,32 @@ void camera_update(float tx, float ty, int vw, int vh, int lw_px, int lh_px, uin
 }
 
 // ---- snapshot helpers ------------------------------------------------------
-void copy_vram(uint8_t* dst, const uint8_t* const* pages, int npages, bool obj) {
+void copy_vram(uint8_t* dst, const uint8_t* const* pages, int npages, bool /*obj*/) {
+    // a page with no direct mapping has no VRAM bank behind it in a stage
+    // (host: every such page read back as zeros, 20 of 20 checks), so it is
+    // zero here instead of 4096 slow reads per page per frame
     for (int i = 0; i < npages; ++i) {
         uint8_t* d = dst + i * 0x4000;
-        if (pages[i]) { std::memcpy(d, pages[i], 0x4000); continue; }
-        for (uint32_t a = 0; a < 0x4000; a += 4) {
-            const uint32_t w = obj ? nds_vram_read_obj(0, i * 0x4000u + a, 4) : nds_vram_read_bg(0, i * 0x4000u + a, 4);
-            std::memcpy(d + a, &w, 4);
-        }
+        if (pages[i]) std::memcpy(d, pages[i], 0x4000);
+        else std::memset(d, 0, 0x4000);
     }
 }
 
 void copy_ram(uint8_t* dst, uint32_t src, uint32_t bytes) {
-    for (uint32_t a = 0; a < bytes; a += 4) {
-        const uint32_t w = NR_RD32(src + a);
-        std::memcpy(dst + a, &w, 4);
+    // a 4 KiB page at a time straight from the guest's page table; word reads
+    // only for a page without a direct mapping
+    uint32_t a = 0;
+    while (a < bytes) {
+        const uint32_t addr = src + a;
+        const uint32_t n = std::min<uint32_t>(bytes - a, 0x1000u - (addr & 0xFFFu));
+        const uintptr_t b = nr_rd_tab[addr >> 12];
+        if (b) std::memcpy(dst + a, (const void*)(b + (addr & 0xFFFu)), n);
+        else
+            for (uint32_t k = 0; k < n; k += 4) {
+                const uint32_t w = NR_RD32(addr + k);
+                std::memcpy(dst + a + k, &w, std::min<uint32_t>(4, n - k));
+            }
+        a += n;
     }
 }
 
@@ -178,7 +191,16 @@ bool srnx_wide_stage_active() {
 
 void srnx_wide_align_main(SrnxWideParams& p, const uint8_t* data, const uint32_t* ds);
 
+#ifdef SRNX_HOST_PROFILE
+#include <chrono>
+double g_snap_part[8];
+static std::chrono::steady_clock::time_point g_snap_t;
+#define SNAP_T(i) do { auto _n = std::chrono::steady_clock::now(); if (i) g_snap_part[i] += std::chrono::duration<double, std::milli>(_n - g_snap_t).count(); g_snap_t = _n; } while (0)
+#else
+#define SNAP_T(i) do {} while (0)
+#endif
 bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, const uint32_t* bottom) {
+    SNAP_T(0);
     std::memset(&p, 0, sizeof(p));
     const SrnxZoom z = kSrnxZooms[std::clamp(g_srnx_zoom, 0, 3)];
     const int VW = z.w, VH = z.h;
@@ -199,6 +221,12 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     g_srnx_wide_r = std::max(0, wx + VW - (cam0x + 256)) + kMargin;
     g_srnx_wide_t = std::max(0, cam0y - wy) + kMargin;
     g_srnx_wide_b = std::max(0, wy + VH - (cam0y + 192)) + kMargin;
+    // object activation (hook in overlay 0): the same area, with room to spare
+    // so objects come alive before they scroll into view
+    g_srnx_act_l = g_srnx_wide_l + 32;
+    g_srnx_act_r = g_srnx_wide_r + 32;
+    g_srnx_act_t = g_srnx_wide_t + 32;
+    g_srnx_act_b = g_srnx_wide_b + 32;
 
     p.view_w = VW;
     p.view_h = VH;
@@ -239,10 +267,12 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     const NdsVramRendererView* vv = nds_vram_renderer_view(0);
     const uint8_t* pal = nds_vram_renderer_palette(0);
     if (!vv || !pal) return false;
+    SNAP_T(6);
     copy_vram(data + p.off_bg, vv->bg, 32, false);
     copy_vram(data + p.off_obj, vv->obj, 16, true);
     std::memcpy(data + p.off_bgpal, pal, 512);
     std::memcpy(data + p.off_objpal, pal + 512, 512);
+    SNAP_T(1);
     if ((p.dispcnt >> 30) & 1)
         for (uint32_t s = 0; s < 2; ++s)
             for (uint32_t a = 0; a < 8192; a += 4) {
@@ -252,6 +282,7 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     p.backdrop = rgb((uint16_t)(pal[0] | (pal[1] << 8)));
 
     // layouts and block data
+    SNAP_T(2);
     if (lay[0] != g_blk_level) {
         uint32_t mx = 0;
         for (uint32_t L : lay) {
@@ -268,6 +299,7 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     }
     copy_ram(data + p.off_blk, blk, g_blk_count * 128u);
 
+    SNAP_T(3);
     // sprites: world ones by the main camera, then HUD pinned to the corners
     const SrnxSprite* sp = nullptr;
     const uint32_t n = srnx_spr_last(0, &sp);
@@ -283,8 +315,11 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
             SrnxWideSpr& o = out[nw + nh];
             int x = sp[i].x >> 12, y = sp[i].y >> 12;
             if (hud) {
-                if (x >= 128) x += VW - 256;
-                if (y >= 172) y += VH - 192;
+                // Sonic Rush's HUD is all on the left: keep every piece where
+                // the game put it, and only the lives counter (bottom of the
+                // screen) moves to the view's bottom edge. (switch-test8 moved
+                // right-half pieces right, which split the score and time.)
+                if (y >= 160) y += VH - 192;
             } else {
                 x += spr_ox;
                 y += spr_oy;
@@ -311,7 +346,12 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     p.main_valid = (mainscr && f3d && (p.dispcnt & 0x100)) ? 1u : 0u;
     if (p.main_valid) {
         std::memcpy(data + p.off_main, f3d, 256 * 192 * 4);
+        SNAP_T(4);
         srnx_wide_align_main(p, data, mainscr);
+        SNAP_T(5);
+    }
+    SNAP_T(7);
+    if (false) {
     }
     (void)kGap;
     return true;
@@ -438,12 +478,16 @@ uint32_t brighten(uint32_t c, uint32_t mb) {
 // grid of points (sprites and the 3D layer only add noise to every offset).
 void srnx_wide_align_main(SrnxWideParams& p, const uint8_t* data, const uint32_t* ds_screen) {
     const Src s{p, data};
+    // around last frame's correction first (it rarely changes); the full
+    // +-3 search only when the best of those is poor
+    static int last_dx = 0, last_dy = 0;
     int best = -1, bdx = 0, bdy = 0;
-    for (int dy = -3; dy <= 3; ++dy)
-        for (int dx = -3; dx <= 3; ++dx) {
+    auto search = [&](int dx0, int dx1, int dy0, int dy1, int step) {
+    for (int dy = dy0; dy <= dy1; ++dy)
+        for (int dx = dx0; dx <= dx1; ++dx) {
             int score = 0;
-            for (int gy = 4; gy < 192; gy += 8)
-                for (int gx = 4; gx < 256; gx += 8) {
+            for (int gy = 4; gy < 192; gy += step)
+                for (int gx = 4; gx < 256; gx += step) {
                     const int x = p.main_x + dx + gx, y = p.main_y + dy + gy;
                     uint16_t col = 0;
                     bool have = false;
@@ -456,8 +500,13 @@ void srnx_wide_align_main(SrnxWideParams& p, const uint8_t* data, const uint32_t
                     const uint32_t ds = ds_screen[gy * 256 + gx];
                     score += ((ours ^ ds) & 0xFFFFFF) == 0;
                 }
-            if (score > best || (score == best && dx == 0 && dy == 0)) { best = score; bdx = dx; bdy = dy; }
+            if (score > best || (score == best && dx == last_dx && dy == last_dy)) { best = score; bdx = dx; bdy = dy; }
         }
+    };
+    search(last_dx - 1, last_dx + 1, last_dy - 1, last_dy + 1, 16);      // 9 offsets x 192 points
+    if (best < 192 / 2) { best = -1; search(-3, 3, -3, 3, 16); }           // poor match: look wider
+    last_dx = bdx;
+    last_dy = bdy;
     p.main_x += bdx;
     p.main_y += bdy;
 }

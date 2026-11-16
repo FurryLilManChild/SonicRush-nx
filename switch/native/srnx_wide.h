@@ -17,6 +17,7 @@ typedef struct SrnxSprite {
 extern int g_srnx_wide;       // wide view active: hooks widen the clip
 extern int g_srnx_wide_l, g_srnx_wide_r, g_srnx_wide_t, g_srnx_wide_b;   // extra pixels around the 256x192 view
 extern uint32_t g_srnx_spr_overflow;
+extern int g_srnx_act_l, g_srnx_act_r, g_srnx_act_t, g_srnx_act_b;   // object activation widening (pixels)
 extern int g_srnx_hide_hud;     // wide view: keep HUD sprites out of the DS picture
 
 int srnx_spr_clip(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t mgr);

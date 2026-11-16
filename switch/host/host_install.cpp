@@ -26,6 +26,7 @@ extern bool g_nx_dma_block;
 #include "../native/nr_state.h"
 #include "../native/srnx_wide.h"
 #include "../src/srnx_wide_render.h"
+extern double g_snap_part[8];   // srnx_wide_render.cpp, SRNX_HOST_PROFILE
 extern void (*g_nx_host_round_hook)(uint64_t arm9_cycles);
 
 void nds_set_key_mask(uint32_t mask);   // io.cpp
@@ -46,6 +47,7 @@ const SrnxSprite* g_spr_tmp = nullptr;
 SrnxWideParams g_wide_p{};
 std::vector<uint8_t> g_wide_data;
 bool g_wide_have = false;
+double g_snap_ms = 0; unsigned g_snap_n = 0;
 uint32_t g_wide_ds[2][256 * 192];
 void write_shot(const char* f) {
     std::FILE* o = std::fopen(f, "wb");
@@ -239,8 +241,12 @@ void play_hook(uint64_t cyc) {
                     const double rms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count();
                     size_t diff = 0;
                     for (int i = 0; i < g_wide_p.view_w * g_wide_p.view_h; ++i) diff += ((ref[i] ^ wide[i]) & 0xFFFFFF) != 0;
-                    std::fprintf(stderr, "[srnx] wide CPU draw %dx%d: fast %.3f ms, reference %.2f ms, %zu pixels differ\n",
-                                 g_wide_p.view_w, g_wide_p.view_h, ms, rms, diff);
+                    std::fprintf(stderr, "[srnx] wide CPU draw %dx%d: fast %.3f ms, reference %.2f ms, %zu pixels differ; snapshot %.3f ms avg\n",
+                                 g_wide_p.view_w, g_wide_p.view_h, ms, rms, diff, g_snap_n ? g_snap_ms / g_snap_n : 0.0);
+                    std::fprintf(stderr, "[srnx] snapshot parts per frame: head %.3f vram %.3f extpal %.3f layouts %.3f sprites+3d %.3f align %.3f tail %.3f\n", g_snap_part[6] / g_snap_n,
+                                 g_snap_part[1] / g_snap_n, g_snap_part[2] / g_snap_n, g_snap_part[3] / g_snap_n, g_snap_part[4] / g_snap_n, g_snap_part[5] / g_snap_n, g_snap_part[7] / g_snap_n);
+                    for (double& d : g_snap_part) d = 0;
+                    g_snap_ms = 0; g_snap_n = 0;
                 }
                 if (std::getenv("NR_WIDE_DATA"))
                     if (std::FILE* m = std::fopen((stem + ".wdata").c_str(), "wb")) {
@@ -301,8 +307,11 @@ void wide_vblank() {
     srnx_wide_vblank();
     if (!g_srnx_wide) return;
     if (g_wide_data.empty()) g_wide_data.resize(kSrnxDataBytes);
+    const auto t0 = std::chrono::steady_clock::now();
     g_wide_have = srnx_wide_stage_active() &&
                   srnx_wide_snapshot(g_wide_p, g_wide_data.data(), nds_gpu2d_framebuffer(0), nds_gpu2d_framebuffer(1));
+    g_snap_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    ++g_snap_n;
     g_srnx_hide_hud = 1;
     if (g_wide_have) {   // the DS screens at this VBlank, for host checks
         for (int sc = 0; sc < 2; ++sc)

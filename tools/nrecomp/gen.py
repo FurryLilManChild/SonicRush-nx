@@ -32,7 +32,9 @@ def h32(v):
 def load_hooks(path):
     """Port hooks: C snippets run before the instruction at a guest address.
 
-    File format: a line '@ADDR' (hex) followed by C lines up to the next '@'.
+    File format: a line '@ADDR' or '@ovNN:ADDR' (hex; the second form only in
+    overlay NN, since overlays share addresses) followed by C lines up to the
+    next '@'.
     Snippets see the guest registers as locals r0..r15 and may goto L_ADDR
     labels of the same function. Only our own code goes in these snippets.
     """
@@ -43,7 +45,11 @@ def load_hooks(path):
     for line in open(path):
         t = line.rstrip('\n')
         if t.startswith('@'):
-            cur = int(t[1:].split()[0], 16)
+            spec = t[1:].split()[0]
+            grp = None
+            if ':' in spec:
+                grp, spec = spec.split(':', 1)
+            cur = (grp, int(spec, 16))
             hooks[cur] = ''
         elif cur is not None and t.strip() and not t.strip().startswith('#'):
             hooks[cur] += t.strip() + ' '
@@ -51,6 +57,11 @@ def load_hooks(path):
 
 
 HOOKS = load_hooks(os.environ.get('NR_HOOKS', ''))
+CURRENT_GROUP = None    # 'static' or 'ovNN', set by gen_all while emitting a group
+
+
+def hook_at(a):
+    return HOOKS.get((CURRENT_GROUP, a)) or HOOKS.get((None, a))
 
 class FuncGen:
     def __init__(self, f, name, resolve, entries, arch='v5te'):
@@ -600,11 +611,12 @@ class FuncGen:
                     cyc = 0
             self.w('L_%08X:' % a)
             self.w('    NR_TRACE(%s);' % h32(a))
-            if a in HOOKS:
+            hk = hook_at(a)
+            if hk:
                 if cyc:
                     self.w('    ' + self.tick(cyc))
                     cyc = 0
-                self.w('    /* hook */ ' + HOOKS[a])
+                self.w('    /* hook */ ' + hk)
             if a == f.entry:
                 self.w('    NR_FENTRY(%s);' % h32(a | (1 if f.thumb else 0)))
             cost = 1

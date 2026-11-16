@@ -58,6 +58,8 @@ def main(rom, out):
     stats = {}
 
     def emit_group(tag, prefix, funcs, names_local):
+        import gen as _gen
+        _gen.CURRENT_GROUP = tag
         cur, size, n = [], 0, 0
         entries = []
         def resolve(target, thumb):

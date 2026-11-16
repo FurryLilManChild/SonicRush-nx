@@ -74,6 +74,7 @@ extern "C" {
 int g_srnx_wide = 0;
 int g_srnx_wide_l = 284, g_srnx_wide_r = 285, g_srnx_wide_t = 0, g_srnx_wide_b = 272;
 uint32_t g_srnx_spr_overflow = 0;
+int g_srnx_act_l = 0, g_srnx_act_r = 0, g_srnx_act_t = 0, g_srnx_act_b = 0;
 int g_srnx_hide_hud = 0;
 static int g_ctx_hud = 0;
 void srnx_spr_ctx(int hud) { g_ctx_hud = hud; }
