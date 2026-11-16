@@ -39,6 +39,7 @@ uint32_t nds_vram_read_obj_extpal(int engine, uint32_t addr, uint32_t width);
 const uint8_t* nds_vram_palette_live();
 uint32_t nds_gpu2d_read(uint32_t addr, uint32_t width);
 void nds_gpu2d_debug_regs(int e, uint16_t bgx[4], uint16_t bgy[4], int32_t refx[2], int32_t refy[2], int16_t pabcd[8]);
+const uint32_t* nds_gpu2d_srnx_3d_frame(uint32_t* frames);
 extern unsigned long long g_srnx_gx_busy_skips, g_srnx_gx_busy_reads, g_srnx_gx_halts;   // gpu3d.cpp
 #include <unordered_map>
 #include <algorithm>
@@ -266,6 +267,11 @@ void play_hook(uint64_t cyc) {
                 if (std::getenv("NR_WIDE_DATA"))
                     if (std::FILE* m = std::fopen((stem + ".wdata").c_str(), "wb")) {
                         std::fwrite(g_wide_data.data(), 1, g_wide_data.size(), m);
+                        std::fclose(m);
+                    }
+                if (const uint32_t* f3 = nds_gpu2d_srnx_3d_frame(nullptr))
+                    if (std::FILE* m = std::fopen((stem + ".w3d").c_str(), "wb")) {
+                        std::fwrite(f3, 4, 256 * 192, m);
                         std::fclose(m);
                     }
                 if (std::FILE* m = std::fopen((stem + ".wds").c_str(), "wb")) {

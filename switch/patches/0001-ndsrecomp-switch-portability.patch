@@ -499,7 +499,7 @@ index 022a1af..8c31a75 100644
  #endif
      if (supported) {
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 7d9d4eb..854cfa9 100644
+index 7d9d4eb..72a802f 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
 @@ -4,6 +4,7 @@
@@ -1479,7 +1479,7 @@ index 7d9d4eb..854cfa9 100644
  #endif
          }
          presentation.textures[screen] = SDL_CreateTexture(
-@@ -2077,6 +2818,126 @@ struct OwnedPresentationFrame {
+@@ -2077,6 +2818,170 @@ struct OwnedPresentationFrame {
  };
  #endif
  
@@ -1566,7 +1566,50 @@ index 7d9d4eb..854cfa9 100644
 +#if defined(SRNX)
 +// SonicRush-nx: in the stage view, L3 saves the stage view itself (3x, as on
 +// screen) to captures/cap-NNN.bmp.
-+static void nx_write_wide_capture(const SrnxWideParams& p, const uint8_t* data) {
++const uint32_t* nds_gpu2d_srnx_3d_frame(uint32_t* frames);
++// switch-test12 diagnostic: next to each stage view capture, cap-NNN-ds.bmp
++// holds the two DS screens as the game drew them, and the 3D layer the stage
++// view copied (3D colour where opaque, its colour tinted magenta where
++// translucent, black where empty), side by side at 2x.
++static void nx_write_ds_capture(const char* wide_path, const uint32_t* top, const uint32_t* bottom) {
++    char path[112];
++    std::snprintf(path, sizeof path, "%.*s-ds.bmp", (int)(std::strlen(wide_path) - 4), wide_path);
++    const uint32_t* f3 = nds_gpu2d_srnx_3d_frame(nullptr);
++    const int kS = 2, cw = 256 * 3, ch = 384, w = cw * kS, h = ch * kS;
++    std::vector<uint32_t> pic((size_t)cw * ch, 0xFF000000u);
++    auto c6 = [](uint32_t v) { return ((v << 2) | (v >> 4)) & 0xFF; };
++    for (int y = 0; y < 192; ++y)
++        for (int x = 0; x < 256; ++x) {
++            if (top) pic[(size_t)y * cw + x] = top[y * 256 + x] | 0xFF000000u;
++            if (bottom) pic[(size_t)(y + 192) * cw + x] = bottom[y * 256 + x] | 0xFF000000u;
++            if (f3) {
++                const uint32_t v = f3[y * 256 + x], a = (v >> 24) & 31;
++                uint32_t r = c6(v & 63), g = c6((v >> 8) & 63), b = c6((v >> 16) & 63);
++                if (a && a < 31) { r = (r + 255) / 2; b = (b + 255) / 2; }
++                pic[(size_t)y * cw + 256 + x] = a ? (0xFF000000u | (r << 16) | (g << 8) | b) : 0xFF000000u;
++                // alpha as grey, for the record
++                const uint32_t q = a * 255 / 31;
++                pic[(size_t)y * cw + 512 + x] = 0xFF000000u | (q << 16) | (q << 8) | q;
++            }
++        }
++    FILE* f = std::fopen(path, "wb");
++    if (!f) return;
++    const uint32_t img = static_cast<uint32_t>(w) * h * 4;
++    uint8_t hdr[54] = {'B', 'M'};
++    auto put32 = [&](int o, uint32_t v) { for (int i = 0; i < 4; ++i) hdr[o + i] = (v >> (8 * i)) & 0xFF; };
++    put32(2, 54 + img); put32(10, 54); put32(14, 40); put32(18, w);
++    put32(22, static_cast<uint32_t>(-h));
++    hdr[26] = 1; hdr[28] = 32; put32(34, img);
++    std::fwrite(hdr, 1, 54, f);
++    std::vector<uint32_t> row(w);
++    for (int y = 0; y < ch; ++y) {
++        for (int x = 0; x < cw; ++x)
++            for (int k = 0; k < kS; ++k) row[x * kS + k] = pic[(size_t)y * cw + x];
++        for (int k = 0; k < kS; ++k) std::fwrite(row.data(), 4, w, f);
++    }
++    std::fclose(f);
++}
++static void nx_write_wide_capture(const SrnxWideParams& p, const uint8_t* data, const uint32_t* top, const uint32_t* bottom) {
 +    const int vw = p.view_w, vh = p.view_h, kS = 3;
 +    std::vector<uint32_t> pic((size_t)vw * vh);
 +    srnx_wide_draw_cpu(p, data, pic.data(), vw);
@@ -1597,8 +1640,9 @@ index 7d9d4eb..854cfa9 100644
 +    }
 +    std::fclose(f);
 +    std::snprintf(g_nx_capture_msg, sizeof g_nx_capture_msg, "Saved capture %03u", n);
-+    std::fprintf(stderr, "[sonicrush-nx] %s stage view capture saved: %s (%dx%d, view at world %d,%d)\n", nx_now(), path,
-+                 vw, vh, p.world_x, p.world_y);
++    std::fprintf(stderr, "[sonicrush-nx] %s stage view capture saved: %s (%dx%d, view at world %d,%d, DS main at %d,%d)\n", nx_now(), path,
++                 vw, vh, p.world_x, p.world_y, p.main_x, p.main_y);
++    nx_write_ds_capture(path, top, bottom);
 +}
 +#endif
 +#endif
@@ -1606,7 +1650,7 @@ index 7d9d4eb..854cfa9 100644
  PresentationTicks present_screens(FrontendPresentation& presentation,
                                    const uint32_t* top_pixels,
                                    int top_width,
-@@ -2141,8 +3002,199 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2141,8 +3046,199 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
  #endif
          return ticks;
      }
@@ -1674,7 +1718,7 @@ index 7d9d4eb..854cfa9 100644
 +            if (have && !was_stage) nx_present_wide_check(3);
 +            if (srnx_cap_pending) {
 +                srnx_cap_pending = false;
-+                if (have) nx_write_wide_capture(wide_p, wide_data.data());
++                if (have) nx_write_wide_capture(wide_p, wide_data.data(), top_pixels, bottom_pixels);
 +            }
 +            was_stage = have;
 +            if (have) {
@@ -1806,7 +1850,7 @@ index 7d9d4eb..854cfa9 100644
      uint64_t start = SDL_GetPerformanceCounter();
      SDL_UpdateTexture(presentation.textures[0], nullptr, top_pixels,
                        top_width * sizeof(uint32_t));
-@@ -2152,6 +3204,51 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2152,6 +3248,51 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
      if (!presentation.separate) {
          SDL_Renderer* renderer = presentation.renderers[0];
          start = SDL_GetPerformanceCounter();
@@ -1858,7 +1902,7 @@ index 7d9d4eb..854cfa9 100644
          SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
          SDL_RenderClear(renderer);
          const SDL_Rect top_rect{
-@@ -2169,6 +3266,9 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2169,6 +3310,9 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
                                  virtual_stylus_x, virtual_stylus_y);
          draw_savestate_notice(renderer, bottom_rect, savestate_notice);
          ticks.draw += SDL_GetPerformanceCounter() - start;
@@ -1868,7 +1912,7 @@ index 7d9d4eb..854cfa9 100644
          start = SDL_GetPerformanceCounter();
          SDL_RenderPresent(renderer);
          ticks.swap += SDL_GetPerformanceCounter() - start;
-@@ -2403,6 +3503,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2403,6 +3547,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      // rate directly; the sub-sample remainder is absorbed by the bounded queue
      // instead of producing a roughly once-per-second underrun at 32768 Hz.
      want.freq = kAudioFrequency;
@@ -1882,7 +1926,7 @@ index 7d9d4eb..854cfa9 100644
      want.format = AUDIO_S16SYS;
      want.channels = 2;
  #if !defined(NDS_HAVE_SDL3)
-@@ -2446,6 +3553,19 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2446,6 +3597,19 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          options.virtual_stylus.enabled && !mph_prime_controls_available;
      MphPrimeBindingSet mph_prime_bindings{};
      MphPadBindingSet mph_pad_bindings{};
@@ -1902,7 +1946,7 @@ index 7d9d4eb..854cfa9 100644
      if (mph_prime_controls_available) {
          mph_prime_bindings = make_mph_prime_bindings(options.mph_bindings);
          mph_pad_bindings = make_mph_pad_bindings(options.mph_pad_bindings);
-@@ -2520,7 +3640,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2520,7 +3684,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          nds_set_key_mask(static_cast<uint16_t>(
              0x0FFFu &
              ~(keyboard_pressed | controller_pressed | mouse_pressed |
@@ -1915,7 +1959,7 @@ index 7d9d4eb..854cfa9 100644
      };
      publish_keys();
      nds_set_touch(0, 0, false);
-@@ -2543,6 +3667,106 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2543,6 +3711,106 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      runtime_menu_config.items = runtime_menu_items;
      runtime_menu_config.item_count =
          sizeof(runtime_menu_items) / sizeof(runtime_menu_items[0]);
@@ -2022,7 +2066,7 @@ index 7d9d4eb..854cfa9 100644
      runtime_menu_config.callbacks.context = &runtime_menu_state;
      runtime_menu_config.callbacks.get_value = runtime_menu_get_value;
      runtime_menu_config.callbacks.set_value = runtime_menu_set_value;
-@@ -2552,6 +3776,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2552,6 +3820,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      runtime_menu_config.theme = "nds";
      runtime_menu_config.accept_label = "A / Enter";
      runtime_menu_config.back_label = "B / Backspace";
@@ -2033,7 +2077,7 @@ index 7d9d4eb..854cfa9 100644
      RecompRuntimeUi* runtime_ui =
          recomp_runtime_ui_create(&runtime_menu_config);
      if (!runtime_ui) {
-@@ -2561,6 +3789,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2561,6 +3833,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      bool mouse_down = false;
      bool touch_release_pending = false;
      uint32_t touch_frames_held = 0;
@@ -2048,7 +2092,7 @@ index 7d9d4eb..854cfa9 100644
      int64_t relative_delta_x = 0;
      int64_t relative_delta_y = 0;
      uint64_t relative_direct_writes = 0;
-@@ -3257,9 +4493,282 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3257,9 +4537,282 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  relative_mouse_selftest_stage = 10;
              }
          }
@@ -2331,7 +2375,7 @@ index 7d9d4eb..854cfa9 100644
              if (event.type == SDL_QUIT) {
                  release_relative_mouse();
                  running = false;
-@@ -3451,6 +4960,37 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3451,6 +5004,37 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  clear_virtual_stylus();
                  publish_keys();
              }
@@ -2369,7 +2413,7 @@ index 7d9d4eb..854cfa9 100644
              if (event.type == SDL_CONTROLLERBUTTONDOWN ||
                  event.type == SDL_CONTROLLERBUTTONUP) {
                  RecompRuntimeUiInput menu_input{};
-@@ -3707,10 +5247,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3707,10 +5291,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          if (controller) {
              // Left stick -> D-pad, with hysteresis so a stick resting near
              // a threshold never flickers a direction.
@@ -2386,7 +2430,7 @@ index 7d9d4eb..854cfa9 100644
              const bool menu_open = runtime_menu_open();
              if (menu_open) {
                  if (stick_pressed != 0) {
-@@ -3764,10 +5308,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3764,10 +5352,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                          publish_keys();
                      }
                  };
@@ -2407,7 +2451,7 @@ index 7d9d4eb..854cfa9 100644
              }
  
              if (!menu_open && virtual_stylus_available) {
-@@ -3818,7 +5372,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3818,7 +5416,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  }
              }
  
@@ -2420,7 +2464,7 @@ index 7d9d4eb..854cfa9 100644
                  // Right stick -> camera aim; triggers act as bindable
                  // pseudo-buttons (defaults: RT shoot, LT scan-fire).
                  const float rx = SDL_GameControllerGetAxis(
-@@ -3829,6 +5387,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3829,6 +5431,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                      controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 9830;
                  const bool trigger_left = SDL_GameControllerGetAxis(
                      controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 9830;
@@ -2430,7 +2474,7 @@ index 7d9d4eb..854cfa9 100644
                  if (trigger_right != mph_pad_trigger_right_held) {
                      mph_pad_trigger_right_held = trigger_right;
                      process_mph_prime_pad(MphPadInputKind::TriggerRight,
-@@ -3920,7 +5481,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3920,7 +5525,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  MphPrimeAction::VirtualStylus)];
          const bool generic_virtual_stylus = virtual_stylus_active();
  
@@ -2443,7 +2487,7 @@ index 7d9d4eb..854cfa9 100644
          if (turbo_want != turbo_active) {
              turbo_active = turbo_want;
              if (audio) {
-@@ -3937,6 +5502,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3937,6 +5546,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                           turbo_active ? "on" : "off");
          }
  
@@ -2464,7 +2508,7 @@ index 7d9d4eb..854cfa9 100644
          if ((relative_mouse.captured() || mph_prime_pad_engaged) &&
              options.relative_mouse_direct_aim &&
              !mph_prime_virtual_stylus &&
-@@ -3989,6 +5568,88 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3989,6 +5612,88 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                      nds_set_touch(128, 96, true);
              }
          }
@@ -2553,7 +2597,7 @@ index 7d9d4eb..854cfa9 100644
          if (options.custom_gamepad_bindings) {
              // Button events handle digital bindings; poll signed axes here.
              // Each row has one source, so clearing an axis row cannot release
-@@ -4186,8 +5847,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -4186,8 +5891,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  presentation, blend_cache.blended[0].data(), top_width,
                  blend_cache.blended[1].data(), bottom_width,
                  runtime_ui,
@@ -2565,7 +2609,7 @@ index 7d9d4eb..854cfa9 100644
                  savestate_notice.empty() ? nullptr : savestate_notice.c_str());
              if (!synthetic_ticks.ok) {
                  compute_failed = true;
-@@ -4210,14 +5872,18 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -4210,14 +5916,18 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
              presentation, top_pixels, top_width,
              bottom_pixels, bottom_width,
              runtime_ui,

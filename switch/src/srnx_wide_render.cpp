@@ -331,7 +331,7 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
                 // right-half pieces right, which split the score and time.)
                 // The tension gauge's lowest piece (x 1, y 170) stays with the
                 // gauge; only the lives counter (x 20/32, y 176) moves.
-                if (y >= 172 && x >= 12) y += VH - 192;
+                if (y >= 172) y += VH - 192;   // lives icon and count (icon x varies)
             } else {
                 x += spr_ox;
                 y += spr_oy;
@@ -387,8 +387,8 @@ const int kSz[3][4][2] = {{{8, 8}, {16, 16}, {32, 32}, {64, 64}},
 static inline int bg1_row(const SrnxWideParams& p, int y, int lh) {
     int r = y + p.bg1_sy;
     if (p.bg1_clamp) {
-        if (r < 0) return ((r % 8) + 8) % 8;
-        if (r >= lh) return lh - 8 + (r & 7);
+        if (r < 0) return 0;          // the top row is flat sky; a tile row is not
+        if (r >= lh) return lh - 1;
         return r;
     }
     return ((r % lh) + lh) % lh;
