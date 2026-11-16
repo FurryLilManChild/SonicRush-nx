@@ -37,6 +37,7 @@
 #include "../native/srnx_wide.h"
 
 uint32_t nds_gpu2d_read(uint32_t addr, uint32_t width);
+extern "C" uint32_t bus_read_u32_slow(uint32_t addr);
 void nds_gpu2d_debug_regs(int e, uint16_t bgx[4], uint16_t bgy[4], int32_t refx[2],
                           int32_t refy[2], int16_t pabcd[8]);
 uint32_t nds_vram_read_bg_extpal(int engine, uint32_t addr, uint32_t width);
@@ -51,7 +52,7 @@ uint32_t nds_vram_read_obj(int engine, uint32_t addr, uint32_t width);
 const uint32_t* nds_gpu2d_srnx_3d_frame(uint32_t* frames);
 // switch-test13: the 3D layer drawn for the whole view by our own projection
 // (deko renderer, Switch only; weak so the host build links without it).
-bool nx_deko_stage_image(const uint32_t** px, int* w, int* h, int* rx0, int* ry0, int* rw, int* rh) __attribute__((weak));
+bool nx_deko_stage_image(const uint32_t** px, int* w, int* h, int* rx0, int* ry0, int* rw, int* rh, int* wx, int* wy) __attribute__((weak));
 void nx_deko_srnx_force_scale(int scale) __attribute__((weak));
 #include "srnx_remap.h"
 int g_srnx_own3d = 1;   // menu / env: 0 copies the DS screen's 3D (switch-test12 behaviour)
@@ -180,6 +181,11 @@ void srnx_wide_vblank() {
     l.ok = in_ram(tgt);
     l.tx = l.ok ? (float)((int32_t)NR_RD32(tgt + 0x10) >> 8) : 0.f;
     l.ty = l.ok ? (float)((int32_t)NR_RD32(tgt + 0x14) >> 8) : 0.f;
+    // switch-test14: the 3D geometry finished this frame was built for the
+    // camera now in record 0; tag it so it is placed by level position (a
+    // screen swap moves the DS screen, not the level).
+    g_srnx_remap_cur.wx = l.cam0x;
+    g_srnx_remap_cur.wy = l.cam0y;
 }
 
 void srnx_wide_inactive() {
@@ -281,11 +287,22 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     p.off_lay0 = take(kSrnxLayMax);
     p.off_lay1 = take(kSrnxLayMax);
     p.off_blk = take(kSrnxBlkMax);
-    p.off_spr = take(kSrnxSprMax * 16);
+    p.off_spr = take(kSrnxSprMax * 16 + 512);
     p.off_main = take(256 * 192 * 4);
     p.off_v3d = take(1024 * 512 * 4);
     if (off > kSrnxDataBytes) return false;
 
+    {   // rotation/scale groups from engine A's OAM, and the blend registers
+        uint8_t* af = data + p.off_spr + kSrnxAffOff;
+        for (uint32_t g = 0; g < 32; ++g)
+            for (uint32_t k = 0; k < 4; ++k) {
+                const uint16_t v = (uint16_t)(bus_read_u32_slow(0x07000000u + g * 32u + k * 8u + 4u) >> 16);
+                std::memcpy(af + (g * 4 + k) * 2, &v, 2);
+            }
+        const uint32_t bc = nds_gpu2d_read(0x04000050u, 2) & 0xFFFF, ba = nds_gpu2d_read(0x04000052u, 2) & 0xFFFF;
+        std::memcpy(af + 256, &bc, 4);
+        std::memcpy(af + 260, &ba, 4);
+    }
     const NdsVramRendererView* vv = nds_vram_renderer_view(0);
     const uint8_t* pal = nds_vram_renderer_palette(0);
     if (!vv || !pal) return false;
@@ -382,17 +399,18 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
         }
         nx_deko_srnx_force_scale(sc);
         srnx_remap_set(g_srnx_remap_next, -p.main_x - m, -p.main_y - m, VW + 2 * m, VH + 2 * m);
-        const uint32_t* px; int w, h, rx0, ry0, rw, rh;
-        if (p.main_valid && nx_deko_stage_image(&px, &w, &h, &rx0, &ry0, &rw, &rh)) {
-            // view pixel (x, y) is DS pixel (x - main_x, y - main_y); fixed point steps
+        const uint32_t* px; int w, h, rx0, ry0, rw, rh, fwx, fwy;
+        if (p.main_valid && nx_deko_stage_image(&px, &w, &h, &rx0, &ry0, &rw, &rh, &fwx, &fwy)) {
+            // view pixel (x, y) is level (world_x + x, world_y + y), which is
+            // pixel (world - fw) of the DS screen this 3D frame was built for
             uint32_t* o = reinterpret_cast<uint32_t*>(data + p.off_v3d);
             const int64_t sx = ((int64_t)w << 16) / rw, sy = ((int64_t)h << 16) / rh;
             for (int y = 0; y < VH; ++y) {
-                const int64_t hy = ((int64_t)(y - p.main_y - ry0) * sy + sy / 2) >> 16;
+                const int64_t hy = ((int64_t)(y + p.world_y - fwy - ry0) * sy + sy / 2) >> 16;
                 uint32_t* row = o + (size_t)y * VW;
                 if (hy < 0 || hy >= h) { std::memset(row, 0, (size_t)VW * 4); continue; }
                 const uint32_t* src = px + hy * w;
-                int64_t fx = (int64_t)(-p.main_x - rx0) * sx + sx / 2;
+                int64_t fx = (int64_t)(p.world_x - fwx - rx0) * sx + sx / 2;
                 for (int x = 0; x < VW; ++x, fx += sx) {
                     const int64_t hx = fx >> 16;
                     row[x] = (hx >= 0 && hx < w) ? src[hx] : 0u;
@@ -510,8 +528,17 @@ bool spr_pixel(const Src& s, uint32_t first, uint32_t count, int x, int y, uint1
         const int shape = (a0 >> 14) & 3;
         if (shape == 3) continue;
         const int w = kSz[shape][(a1 >> 14) & 3][0], h = kSz[shape][(a1 >> 14) & 3][1];
+        const bool dbl = rs && ((a0 >> 9) & 1);
+        const int bw = dbl ? 2 * w : w, bh = dbl ? 2 * h : h;
         int xx = x - sx, yy = y - sy;
-        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        if (xx < 0 || yy < 0 || xx >= bw || yy >= bh) continue;
+        if (rs) {
+            const int16_t* af = reinterpret_cast<const int16_t*>(s.d + p.off_spr + kSrnxAffOff) + ((a1 >> 9) & 31) * 4;
+            const int cx = xx - bw / 2, cy = yy - bh / 2;
+            xx = ((af[0] * cx + af[1] * cy) >> 8) + w / 2;
+            yy = ((af[2] * cx + af[3] * cy) >> 8) + h / 2;
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        }
         if (!rs && (a1 & 0x1000)) xx = w - 1 - xx;
         if (!rs && (a1 & 0x2000)) yy = h - 1 - yy;
         const bool bpp8 = a0 & 0x2000;
@@ -527,11 +554,16 @@ bool spr_pixel(const Src& s, uint32_t first, uint32_t count, int x, int y, uint1
             v = (xx & 1) ? (b >> 4) : (b & 15);
         }
         if (!v) continue;
-        col = s.u16(p.off_objpal + 2 * (bpp8 ? v : ((a2 >> 12) * 16 + v)));
+        col = (uint16_t)(s.u16(p.off_objpal + 2 * (bpp8 ? v : ((a2 >> 12) * 16 + v))) & 0x7FFF) | ((((a0 >> 10) & 3) == 1) ? 0x8000 : 0);
         prio = pr;
         hit = true;
     }
     return hit;
+}
+
+uint32_t blend_obj(uint32_t a, uint32_t b, uint32_t eva, uint32_t evb) {
+    auto ch = [&](int sh) { return std::min<uint32_t>(255, ((((a >> sh) & 255) * eva) + (((b >> sh) & 255) * evb)) / 16) << sh; };
+    return 0xFF000000u | ch(16) | ch(8) | ch(0);
 }
 
 uint32_t brighten(uint32_t c, uint32_t mb) {
@@ -602,7 +634,10 @@ uint32_t srnx_wide_pixel(const Src& s, int x, int y) {
     // sprites
     uint16_t sc; int sp = 4;
     if (((p.dispcnt >> 12) & 1) && spr_pixel(s, 0, p.nspr, x, y, sc, sp) && sp * 8 + 1 < below_key) {
-        below = rgb(sc);
+        if (sc & 0x8000) {
+            const uint32_t ba = s.u32(p.off_spr + kSrnxAffOff + 260);
+            below = blend_obj(rgb(sc & 0x7FFF), below, std::min<uint32_t>(ba & 31, 16), std::min<uint32_t>((ba >> 8) & 31, 16));
+        } else below = rgb(sc);
         below_key = sp * 8 + 1;
     }
     uint32_t c = below;
@@ -666,8 +701,42 @@ void draw_sprites(const Src& s, uint32_t first, uint32_t count, int W, int H) {
         const int shape = (a0 >> 14) & 3;
         if (shape == 3) continue;
         const int w = kSz[shape][(a1 >> 14) & 3][0], h = kSz[shape][(a1 >> 14) & 3][1];
-        if (sx >= W || sy >= H || sx + w <= 0 || sy + h <= 0) continue;
+        // rotation/scale sprites: box doubles with the double-size bit
+        const bool dbl = rs && ((a0 >> 9) & 1);
+        const int bw = dbl ? 2 * w : w, bh = dbl ? 2 * h : h;
+        if (sx >= W || sy >= H || sx + bw <= 0 || sy + bh <= 0) continue;
         const uint8_t pr = (a2 >> 10) & 3;
+        const uint16_t semi = (((a0 >> 10) & 3) == 1) ? 0x8000 : 0;
+        if (rs) {
+            const int16_t* af = reinterpret_cast<const int16_t*>(s.d + p.off_spr + kSrnxAffOff) + ((a1 >> 9) & 31) * 4;
+            const int pa = af[0], pb = af[1], pc = af[2], pd = af[3];
+            const bool bpp8r = a0 & 0x2000;
+            const uint32_t tile = a2 & 0x3FF, palbase = bpp8r ? 0 : (a2 >> 12) * 16;
+            for (int yy = std::max(0, -sy); yy < bh && sy + yy < H; ++yy) {
+                const int cy = yy - bh / 2;
+                uint8_t* prow = g_sp_pr + (size_t)(sy + yy) * W + sx;
+                uint16_t* crow = g_sp_col + (size_t)(sy + yy) * W + sx;
+                for (int xx = std::max(0, -sx); xx < bw && sx + xx < W; ++xx) {
+                    if (pr > prow[xx]) continue;
+                    const int cx = xx - bw / 2;
+                    const int px = ((pa * cx + pb * cy) >> 8) + w / 2, py = ((pc * cx + pd * cy) >> 8) + h / 2;
+                    if (px < 0 || py < 0 || px >= w || py >= h) continue;
+                    const uint32_t tx = (uint32_t)px >> 3, ty = (uint32_t)py >> 3;
+                    const uint32_t to = one_d ? tile * bound + (ty * (uint32_t)(w / 8) + tx) * (bpp8r ? 64u : 32u)
+                                              : (tile + ty * 32u + tx * (bpp8r ? 2u : 1u)) * 32u;
+                    uint32_t v;
+                    if (bpp8r) v = s.u8(p.off_obj + ((to + (py & 7) * 8 + (px & 7)) & (kSrnxObjVram - 1)));
+                    else {
+                        const uint8_t b = s.u8(p.off_obj + ((to + (py & 7) * 4 + (px & 7) / 2) & (kSrnxObjVram - 1)));
+                        v = (px & 1) ? (b >> 4) : (b & 15);
+                    }
+                    if (!v) continue;
+                    prow[xx] = pr;
+                    crow[xx] = (uint16_t)(s.u16(p.off_objpal + 2 * (palbase + v)) & 0x7FFF) | semi;
+                }
+            }
+            continue;
+        }
         const bool bpp8 = a0 & 0x2000;
         const uint32_t tile = a2 & 0x3FF, palbase = bpp8 ? 0 : (a2 >> 12) * 16;
         const bool hf = !rs && (a1 & 0x1000), vf = !rs && (a1 & 0x2000);
@@ -691,7 +760,7 @@ void draw_sprites(const Src& s, uint32_t first, uint32_t count, int W, int H) {
                 }
                 if (!v) continue;
                 prow[xx] = pr;
-                crow[xx] = s.u16(p.off_objpal + 2 * (palbase + v));
+                crow[xx] = (uint16_t)(s.u16(p.off_objpal + 2 * (palbase + v)) & 0x7FFF) | semi;
             }
         }
     }
@@ -787,7 +856,11 @@ void srnx_wide_draw_cpu(const SrnxWideParams& p, const uint8_t* data, uint32_t* 
             }
         }
     }
-    // world sprites over BGs of the same or a lower priority
+    // world sprites over BGs of the same or a lower priority; semi-transparent
+    // ones blend with what is below by BLDALPHA
+    uint32_t bldalpha;
+    std::memcpy(&bldalpha, data + p.off_spr + kSrnxAffOff + 260, 4);
+    const uint32_t eva = std::min<uint32_t>(bldalpha & 31, 16), evb = std::min<uint32_t>((bldalpha >> 8) & 31, 16);
     if (((p.dispcnt >> 12) & 1) && p.nspr) {
         draw_sprites(s, 0, p.nspr, W, H);
         for (int y = 0; y < H; ++y) {
@@ -796,7 +869,10 @@ void srnx_wide_draw_cpu(const SrnxWideParams& p, const uint8_t* data, uint32_t* 
             const uint8_t* pr = g_sp_pr + (size_t)y * W;
             const uint16_t* cc = g_sp_col + (size_t)y * W;
             for (int x = 0; x < W; ++x)
-                if (pr[x] < 4 && pr[x] * 8 + 1 < k[x]) { o[x] = lut[cc[x] & 0x7FFF]; k[x] = (uint8_t)(pr[x] * 8 + 1); }
+                if (pr[x] < 4 && pr[x] * 8 + 1 < k[x]) {
+                    o[x] = (cc[x] & 0x8000) ? blend_obj(lut[cc[x] & 0x7FFF], o[x], eva, evb) : lut[cc[x] & 0x7FFF];
+                    k[x] = (uint8_t)(pr[x] * 8 + 1);
+                }
         }
     }
     // the 3D layer, inside its window

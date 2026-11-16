@@ -110,6 +110,7 @@ public:
     GpuMemHeap::Allocation StageReadback[HiresBuffers];
     int BufStageOn[HiresBuffers] = {}, BufScale[HiresBuffers] = {};
     int BufRx0[HiresBuffers] = {}, BufRy0[HiresBuffers] = {}, BufRw[HiresBuffers] = {}, BufRh[HiresBuffers] = {};
+    int BufWx[HiresBuffers] = {}, BufWy[HiresBuffers] = {};
     int StageLockBuf() const { return LockBuf; }
 private:
     dk::Fence FinalOutputFence[2] = {};

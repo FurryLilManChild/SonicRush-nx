@@ -1489,6 +1489,7 @@ void DekoRenderer::RenderFrame(GPU& gpu)
     {
         BufRx0[hiBuf] = g_srnx_remap_render.rx0; BufRy0[hiBuf] = g_srnx_remap_render.ry0;
         BufRw[hiBuf] = g_srnx_remap_render.rw; BufRh[hiBuf] = g_srnx_remap_render.rh;
+        BufWx[hiBuf] = g_srnx_remap_render.wx; BufWy[hiBuf] = g_srnx_remap_render.wy;
         const DkGpuAddr src = CurScale > 0 ? NxDeko::DataHeap->GpuAddr(HiresOutputMemory[hiBuf])
                                            : NxDeko::ReadbackHeap->GpuAddr(FinalOutputMemory[curSlice]);
         EmuCmdBuf.copyBuffer(src, NxDeko::ReadbackHeap->GpuAddr(StageReadback[hiBuf]), (uint32_t)ScrW * ScrH * 4);
@@ -1679,7 +1680,7 @@ Renderer3D* NxCreateDekoRenderer()
 // SonicRush-nx stage view: the 3D image the 2D engine is showing this frame,
 // if it was drawn with the remap. px is in the 3D line format (RGB6, alpha5
 // at bit 24), w x h, covering DS-screen pixels (rx0, ry0) .. (+rw, +rh).
-bool nx_deko_stage_image(const uint32_t** px, int* w, int* h, int* rx0, int* ry0, int* rw, int* rh)
+bool nx_deko_stage_image(const uint32_t** px, int* w, int* h, int* rx0, int* ry0, int* rw, int* rh, int* wx, int* wy)
 {
     melonDS::DekoRenderer* r = melonDS::g_nx_deko_renderer;
     if (!r) return false;
@@ -1689,6 +1690,7 @@ bool nx_deko_stage_image(const uint32_t** px, int* w, int* h, int* rx0, int* ry0
     *px = NxDeko::ReadbackHeap->CpuAddr<const uint32_t>(r->StageReadback[b]);
     *w = kW[r->BufScale[b]]; *h = kH[r->BufScale[b]];
     *rx0 = r->BufRx0[b]; *ry0 = r->BufRy0[b]; *rw = r->BufRw[b]; *rh = r->BufRh[b];
+    *wx = r->BufWx[b]; *wy = r->BufWy[b];
     return true;
 }
 

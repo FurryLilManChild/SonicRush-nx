@@ -51,8 +51,11 @@ constexpr uint32_t kSrnxLayMax = 64 * 1024 * 2;        // layout bytes each (u16
 constexpr uint32_t kSrnxBlkMax = 2048 * 128;           // block data bytes
 constexpr uint32_t kSrnxSprMax = 384;                  // sprites (world + HUD)
 constexpr uint32_t kSrnxDataBytes = kSrnxBgVram + kSrnxObjVram + 512 + 512 + 2 * 8192 +
-                                    2 * kSrnxLayMax + kSrnxBlkMax + kSrnxSprMax * 16 + 256 * 192 * 4 + 1024 * 512 * 4 + 4096;
+                                    2 * kSrnxLayMax + kSrnxBlkMax + kSrnxSprMax * 16 + 512 + 256 * 192 * 4 + 1024 * 512 * 4 + 4096;
 
+// After the sprites (off_spr + kSrnxSprMax * 16): 32 OAM affine groups (PA, PB, PC, PD as
+// s16, 8.8), then BLDCNT and BLDALPHA (u32 each), engine A.
+constexpr uint32_t kSrnxAffOff = kSrnxSprMax * 16;
 // Sprite entry in the data block: x, y (view pixels, top-left), attr0|attr1<<16, attr2.
 struct SrnxWideSpr { int32_t x, y; uint32_t a01, a2; };
 

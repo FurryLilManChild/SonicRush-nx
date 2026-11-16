@@ -49,10 +49,11 @@ static std::unordered_map<uint32_t, unsigned long long> g_svc_hist;
 // the remapped rectangle squeezed into 256x192 (NR_OWN3D=1).
 static int host_own3d() { static int v = -1; if (v < 0) v = std::getenv("NR_OWN3D") ? 1 : 0; return v; }
 static SrnxRemap g_host_prev_render{}, g_host_shown{};
-bool nx_deko_stage_image(const uint32_t** px, int* w, int* h, int* rx0, int* ry0, int* rw, int* rh) {
+bool nx_deko_stage_image(const uint32_t** px, int* w, int* h, int* rx0, int* ry0, int* rw, int* rh, int* wx, int* wy) {
     if (!host_own3d() || !g_host_shown.on) return false;
     *px = nds_gpu2d_srnx_3d_frame(nullptr); *w = 256; *h = 192;
     *rx0 = g_host_shown.rx0; *ry0 = g_host_shown.ry0; *rw = g_host_shown.rw; *rh = g_host_shown.rh;
+    *wx = g_host_shown.wx; *wy = g_host_shown.wy;
     return true;
 }
 void nx_deko_srnx_force_scale(int) {}
