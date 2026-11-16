@@ -499,7 +499,7 @@ index 022a1af..8c31a75 100644
  #endif
      if (supported) {
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 7d9d4eb..72a802f 100644
+index 7d9d4eb..9304502 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
 @@ -4,6 +4,7 @@
@@ -562,7 +562,7 @@ index 7d9d4eb..72a802f 100644
  namespace {
  // Written per presented frame by the frontend loop, read from the same
  // thread by the `frontend_stats` debug command at the debug_pump() safe
-@@ -215,6 +243,107 @@ void observe_top_black_bands(const uint32_t* pixels, uint64_t frame,
+@@ -215,6 +243,108 @@ void observe_top_black_bands(const uint32_t* pixels, uint64_t frame,
  #include "recomp_runtime_ui.h"
  
  #include "frontend_latency.h"
@@ -601,6 +601,7 @@ index 7d9d4eb..72a802f 100644
 +extern bool g_nx_fence_3d;
 +#if defined(SRNX)
 +extern unsigned long long g_srnx_fence3d_skips, g_srnx_gx_busy_skips;
++const uint32_t* nds_gpu2d_srnx_3d_frame(uint32_t* frames);
 +#endif
 +extern bool g_nx_fence_card;
 +extern "C" __attribute__((weak)) void nr_stats_snapshot(unsigned long long* out, unsigned n);
@@ -670,7 +671,7 @@ index 7d9d4eb..72a802f 100644
  
  namespace {
  
-@@ -768,6 +897,93 @@ void SDLCALL audio_stream_underrun_callback(void* userdata,
+@@ -768,6 +898,93 @@ void SDLCALL audio_stream_underrun_callback(void* userdata,
  #else
  using NdsAudioDevice = SDL_AudioDeviceID;
  
@@ -764,7 +765,7 @@ index 7d9d4eb..72a802f 100644
  void SDLCALL audio_callback(void* userdata, Uint8* stream, int len) {
      // SDL owns this thread, so it cannot be registered at creation; it
      // registers itself the first time it runs instead. One thread_local test
-@@ -782,6 +998,9 @@ void SDLCALL audio_callback(void* userdata, Uint8* stream, int len) {
+@@ -782,6 +999,9 @@ void SDLCALL audio_callback(void* userdata, Uint8* stream, int len) {
      std::memset(stream, 0, static_cast<size_t>(len));
      if (!queue || len <= 0) return;
      const uint32_t requested = static_cast<uint32_t>(len) / kAudioFrameBytes;
@@ -774,7 +775,7 @@ index 7d9d4eb..72a802f 100644
      const uint32_t take = std::min(requested, queue->count);
      auto* output = reinterpret_cast<int16_t*>(stream);
      const uint32_t first = std::min(take, kAudioCapacityFrames - queue->read);
-@@ -815,6 +1034,12 @@ bool sdl_init_frontend() {
+@@ -815,6 +1035,12 @@ bool sdl_init_frontend() {
      return SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS |
                      SDL_INIT_GAMECONTROLLER);
  #else
@@ -787,7 +788,7 @@ index 7d9d4eb..72a802f 100644
      return SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS |
                      SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) == 0;
  #endif
-@@ -1006,10 +1231,34 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
+@@ -1006,10 +1232,34 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
                       bool throttle, uint32_t pace_floor, bool& queue_error,
                       const std::vector<int16_t>* owned_pcm = nullptr) {
      if (!device) return 0;
@@ -824,7 +825,7 @@ index 7d9d4eb..72a802f 100644
              ? static_cast<uint32_t>(std::min<size_t>(1024,(owned_pcm->size()-pcm_offset)/2u))
              : nds_spu_read_output(samples.data(), 1024);
          if (!frames) break;
-@@ -1017,45 +1266,69 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
+@@ -1017,45 +1267,69 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
              std::copy_n(owned_pcm->data()+pcm_offset,frames*2u,samples.data());
              pcm_offset+=frames*2u;
          }
@@ -929,7 +930,7 @@ index 7d9d4eb..72a802f 100644
      }
      // Audio is the host's real-time clock. Never drop a produced block: if the
      // emulator is faster than the DS cadence, let SDL consume the backlog
-@@ -1066,7 +1339,7 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
+@@ -1066,7 +1340,7 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
      // down while the emulator is running behind, so a slow stretch spends the
      // buffered runway instead of having it slept away.
      uint32_t queued = audio_queue_count(device, queue);
@@ -938,7 +939,7 @@ index 7d9d4eb..72a802f 100644
          // Spend existing audio pacing slack preparing qualified native code.
          // Guest CPUs remain paused; under load/no slack demand execution wins.
          if (!nds_arm9_native_prepare_idle(1000)) SDL_Delay(1);
-@@ -1185,6 +1458,233 @@ constexpr const char* kRuntimeMouseSensitivityKey =
+@@ -1185,6 +1459,233 @@ constexpr const char* kRuntimeMouseSensitivityKey =
  constexpr const char* kRuntimeResumeKey = "system.resume";
  constexpr const char* kRuntimeQuitKey = "system.quit";
  
@@ -1172,7 +1173,7 @@ index 7d9d4eb..72a802f 100644
  struct RuntimeMenuState {
      NdsFrontendOptions* options = nullptr;
      bool* running = nullptr;
-@@ -1235,6 +1735,34 @@ int runtime_menu_get_value(void* context, const RecompRuntimeUiItem* item,
+@@ -1235,6 +1736,34 @@ int runtime_menu_get_value(void* context, const RecompRuntimeUiItem* item,
                             int* value_out) {
      auto* state = static_cast<RuntimeMenuState*>(context);
      if (!state || !state->options || !item || !value_out) return 0;
@@ -1207,7 +1208,7 @@ index 7d9d4eb..72a802f 100644
      if (std::strcmp(item->key, kRuntimeMouseSensitivityKey) == 0) {
          *value_out = state->options->relative_mouse_sensitivity;
          return 1;
-@@ -1246,6 +1774,120 @@ int runtime_menu_set_value(void* context, const RecompRuntimeUiItem* item,
+@@ -1246,6 +1775,120 @@ int runtime_menu_set_value(void* context, const RecompRuntimeUiItem* item,
                             int value) {
      auto* state = static_cast<RuntimeMenuState*>(context);
      if (!state || !state->options || !item) return 0;
@@ -1328,7 +1329,7 @@ index 7d9d4eb..72a802f 100644
      if (std::strcmp(item->key, kRuntimeMouseSensitivityKey) == 0) {
          if (value < 10 || value > 400) return 0;
          state->options->relative_mouse_sensitivity =
-@@ -1267,6 +1909,23 @@ int runtime_menu_run_action(void* context, const RecompRuntimeUiItem* item) {
+@@ -1267,6 +1910,23 @@ int runtime_menu_run_action(void* context, const RecompRuntimeUiItem* item) {
          if (state->running) *state->running = false;
          return 1;
      }
@@ -1352,7 +1353,7 @@ index 7d9d4eb..72a802f 100644
      return 0;
  }
  
-@@ -1323,6 +1982,15 @@ bool runtime_menu_key_input(SDL_Scancode scancode,
+@@ -1323,6 +1983,15 @@ bool runtime_menu_key_input(SDL_Scancode scancode,
  bool runtime_menu_controller_input(SDL_GameControllerButton button,
                                     RecompRuntimeUiInput* input) {
      if (!input) return false;
@@ -1368,7 +1369,7 @@ index 7d9d4eb..72a802f 100644
      switch (button) {
          case SDL_CONTROLLER_BUTTON_START:
              *input = RECOMP_RUNTIME_UI_INPUT_TOGGLE;
-@@ -1456,6 +2124,49 @@ void destroy_presentation(FrontendPresentation& presentation) {
+@@ -1456,6 +2125,49 @@ void destroy_presentation(FrontendPresentation& presentation) {
      presentation.windows[1] = nullptr;
  }
  
@@ -1418,7 +1419,7 @@ index 7d9d4eb..72a802f 100644
  SDL_Renderer* create_renderer(SDL_Window* window) {
  #if defined(NDS_HAVE_SDL3)
      // Driver order is NOT left to SDL3's default here. SDL3 orders its Windows
-@@ -1518,6 +2229,16 @@ SDL_Window* create_window(const char* title, int x, int y, int w, int h,
+@@ -1518,6 +2230,16 @@ SDL_Window* create_window(const char* title, int x, int y, int w, int h,
          SDL_SetWindowPosition(window, x, y);
      return window;
  #else
@@ -1435,7 +1436,7 @@ index 7d9d4eb..72a802f 100644
      return SDL_CreateWindow(title, x, y, w, h, static_cast<uint32_t>(flags));
  #endif
  }
-@@ -1778,6 +2499,18 @@ bool create_presentation(const NdsFrontendOptions& options,
+@@ -1778,6 +2500,18 @@ bool create_presentation(const NdsFrontendOptions& options,
      const int first_height = presentation.separate
          ? kScreenHeight * kWindowScale
          : kScreenHeight * 2 * kWindowScale;
@@ -1454,7 +1455,7 @@ index 7d9d4eb..72a802f 100644
      const uint64_t top_window_flags =
          SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
          (presentation.gl_top
-@@ -1891,15 +2624,23 @@ bool create_presentation(const NdsFrontendOptions& options,
+@@ -1891,15 +2625,23 @@ bool create_presentation(const NdsFrontendOptions& options,
              !presentation.separate && screen == 0
                  ? kScreenHeight * 2 : kScreenHeight;
          if (screen == 0 || presentation.separate) {
@@ -1479,7 +1480,7 @@ index 7d9d4eb..72a802f 100644
  #endif
          }
          presentation.textures[screen] = SDL_CreateTexture(
-@@ -2077,6 +2818,170 @@ struct OwnedPresentationFrame {
+@@ -2077,6 +2819,169 @@ struct OwnedPresentationFrame {
  };
  #endif
  
@@ -1566,7 +1567,6 @@ index 7d9d4eb..72a802f 100644
 +#if defined(SRNX)
 +// SonicRush-nx: in the stage view, L3 saves the stage view itself (3x, as on
 +// screen) to captures/cap-NNN.bmp.
-+const uint32_t* nds_gpu2d_srnx_3d_frame(uint32_t* frames);
 +// switch-test12 diagnostic: next to each stage view capture, cap-NNN-ds.bmp
 +// holds the two DS screens as the game drew them, and the 3D layer the stage
 +// view copied (3D colour where opaque, its colour tinted magenta where
