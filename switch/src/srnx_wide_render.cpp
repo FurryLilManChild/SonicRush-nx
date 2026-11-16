@@ -55,7 +55,10 @@ const uint32_t* nds_gpu2d_srnx_3d_frame(uint32_t* frames);
 bool nx_deko_stage_image(const uint32_t** px, int* w, int* h, int* rx0, int* ry0, int* rw, int* rh, int* wx, int* wy) __attribute__((weak));
 void nx_deko_srnx_force_scale(int scale) __attribute__((weak));
 #include "srnx_remap.h"
-int g_srnx_own3d = 1;   // menu / env: 0 copies the DS screen's 3D (switch-test12 behaviour)
+int g_srnx_own3d = 1;
+int g_srnx_autocap = 0;          // switch-test15: 1 = Sonic without 3D, 2 = sudden mismatch (frontend saves a capture)
+unsigned g_srnx_cam_swaps = 0;   // camera-record swaps seen (log)
+static int g_rect_x, g_rect_y, g_rect_w = 0, g_rect_h = 0;
 
 int g_srnx_zoom = 0;
 int g_srnx_act_extra = 0, g_srnx_act_off = 0;   // host experiments
@@ -186,6 +189,20 @@ void srnx_wide_vblank() {
     // screen swap moves the DS screen, not the level).
     g_srnx_remap_cur.wx = l.cam0x;
     g_srnx_remap_cur.wy = l.cam0y;
+}
+
+// overlay 0 hook after the camera records swap (0x0233B600): geometry built
+// from here on is for the other DS screen
+extern "C" void srnx_wide_cam_swapped() {
+    if (!g_rect_w) return;
+    const int c0x = (int32_t)NR_RD32(kCam + 4) >> 8;
+    const int c0y = (int32_t)NR_RD32(kCam + 8) >> 8;
+    if (g_srnx_remap_cur.on) {
+        srnx_remap_set(g_srnx_remap_cur, g_rect_x - c0x, g_rect_y - c0y, g_rect_w, g_rect_h);
+        g_srnx_remap_cur.wx = c0x; g_srnx_remap_cur.wy = c0y;
+    }
+    if (g_srnx_remap_next.on) srnx_remap_set(g_srnx_remap_next, g_rect_x - c0x, g_rect_y - c0y, g_rect_w, g_rect_h);
+    ++g_srnx_cam_swaps;
 }
 
 void srnx_wide_inactive() {
@@ -398,7 +415,13 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
             if (mm >= 24) { sc = i; m = mm; break; }
         }
         nx_deko_srnx_force_scale(sc);
-        srnx_remap_set(g_srnx_remap_next, -p.main_x - m, -p.main_y - m, VW + 2 * m, VH + 2 * m);
+        // the rectangle in level coordinates; turned into DS-screen pixels
+        // against the camera the geometry is built with (now, and again at
+        // a screen swap: srnx_wide_cam_swapped)
+        g_rect_x = wx - m; g_rect_y = wy - m; g_rect_w = VW + 2 * m; g_rect_h = VH + 2 * m;
+        const int c0x = (int32_t)NR_RD32(kCam + 4) >> 8;
+    const int c0y = (int32_t)NR_RD32(kCam + 8) >> 8;
+        srnx_remap_set(g_srnx_remap_next, g_rect_x - c0x, g_rect_y - c0y, g_rect_w, g_rect_h);
         const uint32_t* px; int w, h, rx0, ry0, rw, rh, fwx, fwy;
         if (p.main_valid && nx_deko_stage_image(&px, &w, &h, &rx0, &ry0, &rw, &rh, &fwx, &fwy)) {
             // view pixel (x, y) is level (world_x + x, world_y + y), which is
@@ -417,6 +440,17 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
                 }
             }
             p.v3d_valid = 1;
+            // switch-test15: Sonic present but no 3D around him -> automatic capture
+            if (L.ok) {
+                const int sx0 = (int)tx - wx, sy0 = (int)ty - wy;
+                if (sx0 >= 8 && sx0 < VW - 8 && sy0 >= 16 && sy0 < VH) {
+                    int n = 0;
+                    for (int y = std::max(0, sy0 - 40); y < std::min(VH, sy0 + 8); ++y)
+                        for (int x = std::max(0, sx0 - 24); x < std::min(VW, sx0 + 24); ++x)
+                            n += (o[(size_t)y * VW + x] >> 24 & 31) != 0;
+                    if (n == 0 && g_srnx_autocap == 0) g_srnx_autocap = 1;
+                }
+            }
         }
         SNAP_T(4);
     } else {

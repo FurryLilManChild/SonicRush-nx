@@ -50,3 +50,7 @@ if (g_srnx_wide) { r0 -= (uint32_t)g_srnx_act_l; NR_WR32(r13 + 0x20u, r0);
 # Widen the margin to cover the stage view.
 @02068EB4
 if (g_srnx_wide) r2 += (uint32_t)g_srnx_keep_margin;
+# switch-test15: the camera records just swapped (main and other DS screen);
+# 3D geometry from here on is built for the other screen
+@ov00:0233B600
+srnx_wide_cam_swapped();

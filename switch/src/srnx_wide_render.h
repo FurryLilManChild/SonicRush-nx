@@ -63,6 +63,8 @@ struct SrnxWideSpr { int32_t x, y; uint32_t a01, a2; };
 bool srnx_wide_stage_active();
 // Not on a stage (or the stage view is off): the 3D engine draws the DS screen again.
 void srnx_wide_inactive();
+extern int g_srnx_autocap;
+extern unsigned g_srnx_cam_swaps;
 // End of frame, emulation thread: update the camera and fill params + data
 // (data must hold kSrnxDataBytes). top/bottom are the DS screens as drawn.
 bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, const uint32_t* bottom);

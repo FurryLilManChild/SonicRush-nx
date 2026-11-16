@@ -448,6 +448,11 @@ bool wide_mismatch(const SrnxWideParams& p, const uint32_t* view, const uint32_t
         }
         if (n > 200) best = std::min(best, (float)diff / n);
     }
+    {   // switch-test15: a sudden jump in mismatch during play triggers an automatic capture
+        static float prev = 0.f;
+        if (!fallback && prev < 0.2f && best > 0.5f && g_srnx_autocap == 0) g_srnx_autocap = 2;
+        prev = best;
+    }
     const bool want = fallback ? best > 0.2f : best > 0.82f;
     if (want != fallback) {
         if (++run >= (fallback ? 8 : 6)) {

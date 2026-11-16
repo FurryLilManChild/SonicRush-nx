@@ -47,3 +47,9 @@ void srnx_alloc_report(void);
 #ifdef __cplusplus
 }
 #endif
+
+// switch-test15: overlay 0 camera-record swap finished (srnx_wide_render.cpp)
+#ifdef __cplusplus
+extern "C"
+#endif
+void srnx_wide_cam_swapped(void);
