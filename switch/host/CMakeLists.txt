@@ -52,7 +52,7 @@ target_compile_definitions(mphnx_native_game PRIVATE SRNX_FENTRY=1)
 # Host debug: function-entry log (NR_CALLTRACE_FROM decides when it prints).
 target_compile_definitions(mphnx_native_game PRIVATE NR_CALLTRACE=1)
 target_sources(nds_runner PRIVATE "${_nat}/nr_runtime.cpp" "${_nat}/nr_runtime7.cpp" "${_nat}/nr_coro.c"
-    "${_nat}/nr_coro_switch.S" "${_nat}/nr_state.cpp" "${_nat}/srnx_wide.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../src/srnx_wide_render.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/host_install.cpp")
+    "${_nat}/nr_coro_switch.S" "${_nat}/nr_state.cpp" "${_nat}/srnx_wide.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../src/srnx_wide_render.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../src/srnx_replay.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/host_install.cpp")
 target_include_directories(nds_runner PRIVATE "${_nat}" "${MPHNX_NATIVE_DIR}")
 target_compile_definitions(nds_runner PRIVATE MPHNX_NATIVE=1 NR_CALLTRACE=1 SRNX=1 SRNX_HOST_PROFILE=1)
 target_link_libraries(nds_runner PRIVATE mphnx_native_game)

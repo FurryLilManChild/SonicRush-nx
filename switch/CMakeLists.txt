@@ -132,7 +132,7 @@ if(MPHNX_NATIVE_DIR)
         target_compile_options(mphnx_native_game PRIVATE -fPIE
             "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/compat/mphnx_hidden.h")
     endif()
-    target_sources(nds_runner PRIVATE "${_nat}/nr_runtime.cpp" "${_nat}/nr_runtime7.cpp" "${_nat}/nr_coro.c" "${_nat}/nr_coro_switch.S" "${_nat}/nr_state.cpp" "${_nat}/srnx_wide.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/srnx_wide_render.cpp")
+    target_sources(nds_runner PRIVATE "${_nat}/nr_runtime.cpp" "${_nat}/nr_runtime7.cpp" "${_nat}/nr_coro.c" "${_nat}/nr_coro_switch.S" "${_nat}/nr_state.cpp" "${_nat}/srnx_wide.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/srnx_wide_render.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/srnx_replay.cpp")
     target_include_directories(nds_runner PRIVATE "${_nat}" "${MPHNX_NATIVE_DIR}")
     target_compile_definitions(nds_runner PRIVATE MPHNX_NATIVE=1)
     target_link_libraries(nds_runner PRIVATE mphnx_native_game)
@@ -165,7 +165,7 @@ target_sources(nds_runner PRIVATE
 # SonicRush-nx game profile: Stacked (seamless column) default, no splash skip.
 target_compile_definitions(nds_runner PRIVATE SRNX=1)
 target_compile_definitions(nds_runner PRIVATE MPHNX_VERSION="${MPHNX_ENGINE_TAG}")
-set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/nx_main.cpp" "${NDSRECOMP_ROOT}/runner/src/frontend.cpp" TARGET_DIRECTORY nds_runner
+set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/nx_main.cpp" "${NDSRECOMP_ROOT}/runner/src/frontend.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/srnx_replay.cpp" TARGET_DIRECTORY nds_runner
     APPEND PROPERTY COMPILE_DEFINITIONS MPHNX_LABEL="${MPHNX_VERSION}"
     MPHNX_APP_NAME="${MPHNX_APP_NAME}" MPHNX_APP_DIR="/switch/${MPHNX_APP_NAME}")
 if(MPHNX_ONLINE)

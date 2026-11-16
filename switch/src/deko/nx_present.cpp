@@ -3,6 +3,7 @@
 // GPL-3.0); the drawing is 2D-engine blits from CPU-written pitch-linear images.
 #include "nx_present.h"
 #include "../srnx_wide_render.h"
+#include "../srnx_replay.h"
 #include <cmath>
 #include <algorithm>
 #include "nx_deko.h"
@@ -448,11 +449,6 @@ bool wide_mismatch(const SrnxWideParams& p, const uint32_t* view, const uint32_t
         }
         if (n > 200) best = std::min(best, (float)diff / n);
     }
-    {   // switch-test15: a sudden jump in mismatch during play triggers an automatic capture
-        static float prev = 0.f;
-        if (!fallback && prev < 0.2f && best > 0.5f && g_srnx_autocap == 0) g_srnx_autocap = 2;
-        prev = best;
-    }
     const bool want = fallback ? best > 0.2f : best > 0.82f;
     if (want != fallback) {
         if (++run >= (fallback ? 8 : 6)) {
@@ -522,6 +518,7 @@ void present_now(const NxPresentFrame& f)
             }
         } else {
             srnx_wide_draw_cpu(wp, f.wide_data, g_wide_cpu[slot], kWideMaxW);
+            srnx_replay_view(wp, f.wide_data, g_wide_cpu[slot], kWideMaxW);
             // Act title cards and other full-screen pictures live in layers
             // the stage view does not draw. When the view stops matching the
             // DS screen it covers, show the original screens instead.

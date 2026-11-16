@@ -440,17 +440,6 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
                 }
             }
             p.v3d_valid = 1;
-            // switch-test15: Sonic present but no 3D around him -> automatic capture
-            if (L.ok) {
-                const int sx0 = (int)tx - wx, sy0 = (int)ty - wy;
-                if (sx0 >= 8 && sx0 < VW - 8 && sy0 >= 16 && sy0 < VH) {
-                    int n = 0;
-                    for (int y = std::max(0, sy0 - 40); y < std::min(VH, sy0 + 8); ++y)
-                        for (int x = std::max(0, sx0 - 24); x < std::min(VW, sx0 + 24); ++x)
-                            n += (o[(size_t)y * VW + x] >> 24 & 31) != 0;
-                    if (n == 0 && g_srnx_autocap == 0) g_srnx_autocap = 1;
-                }
-            }
         }
         SNAP_T(4);
     } else {
