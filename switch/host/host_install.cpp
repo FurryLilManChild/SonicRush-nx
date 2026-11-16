@@ -44,6 +44,22 @@ extern unsigned long long g_srnx_gx_busy_skips, g_srnx_gx_busy_reads, g_srnx_gx_
 #include <unordered_map>
 #include <algorithm>
 static std::unordered_map<uint32_t, unsigned long long> g_svc_hist;
+#include "srnx_remap.h"
+// switch-test13 host check of the 3D remap: the soft renderer's 1x output is
+// the remapped rectangle squeezed into 256x192 (NR_OWN3D=1).
+static int host_own3d() { static int v = -1; if (v < 0) v = std::getenv("NR_OWN3D") ? 1 : 0; return v; }
+static SrnxRemap g_host_prev_render{}, g_host_shown{};
+bool nx_deko_stage_image(const uint32_t** px, int* w, int* h, int* rx0, int* ry0, int* rw, int* rh) {
+    if (!host_own3d() || !g_host_shown.on) return false;
+    *px = nds_gpu2d_srnx_3d_frame(nullptr); *w = 256; *h = 192;
+    *rx0 = g_host_shown.rx0; *ry0 = g_host_shown.ry0; *rw = g_host_shown.rw; *rh = g_host_shown.rh;
+    return true;
+}
+void nx_deko_srnx_force_scale(int) {}
+// called at each snapshot: the frame on the DS screen was drawn with the remap
+// that was "render" one frame earlier (soft renderer draws during the frame).
+extern int g_srnx_own3d;
+void host_own3d_tick() { g_srnx_own3d = host_own3d(); if (!host_own3d()) return; g_host_shown = g_host_prev_render; g_host_prev_render = g_srnx_remap_render; }
 extern "C" void nr_svc_hist_note(uint32_t pc) { ++g_svc_hist[pc]; }
 static void svc_hist_print() {
     if (g_svc_hist.empty()) return;
@@ -330,6 +346,7 @@ void wide_vblank() {
     if (!g_srnx_wide) return;
     if (g_wide_data.empty()) g_wide_data.resize(kSrnxDataBytes);
     const auto t0 = std::chrono::steady_clock::now();
+    host_own3d_tick();
     g_wide_have = srnx_wide_stage_active() &&
                   srnx_wide_snapshot(g_wide_p, g_wide_data.data(), nds_gpu2d_framebuffer(0), nds_gpu2d_framebuffer(1));
     g_snap_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();

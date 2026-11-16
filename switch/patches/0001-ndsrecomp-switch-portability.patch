@@ -499,7 +499,7 @@ index 022a1af..8c31a75 100644
  #endif
      if (supported) {
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 7d9d4eb..9304502 100644
+index 7d9d4eb..cb86aad 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
 @@ -4,6 +4,7 @@
@@ -1650,7 +1650,7 @@ index 7d9d4eb..9304502 100644
  PresentationTicks present_screens(FrontendPresentation& presentation,
                                    const uint32_t* top_pixels,
                                    int top_width,
-@@ -2141,8 +3046,199 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2141,8 +3046,200 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
  #endif
          return ticks;
      }
@@ -1714,6 +1714,7 @@ index 7d9d4eb..9304502 100644
 +                have = srnx_wide_snapshot(wide_p, wide_data.data(), top_pixels, bottom_pixels);
 +            }
 +            g_srnx_wide = have ? 1 : 0;
++            if (!have) srnx_wide_inactive();
 +            g_srnx_hide_hud = have ? 1 : 0;
 +            if (have && !was_stage) nx_present_wide_check(3);
 +            if (srnx_cap_pending) {
@@ -1850,7 +1851,7 @@ index 7d9d4eb..9304502 100644
      uint64_t start = SDL_GetPerformanceCounter();
      SDL_UpdateTexture(presentation.textures[0], nullptr, top_pixels,
                        top_width * sizeof(uint32_t));
-@@ -2152,6 +3248,51 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2152,6 +3249,51 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
      if (!presentation.separate) {
          SDL_Renderer* renderer = presentation.renderers[0];
          start = SDL_GetPerformanceCounter();
@@ -1902,7 +1903,7 @@ index 7d9d4eb..9304502 100644
          SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
          SDL_RenderClear(renderer);
          const SDL_Rect top_rect{
-@@ -2169,6 +3310,9 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2169,6 +3311,9 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
                                  virtual_stylus_x, virtual_stylus_y);
          draw_savestate_notice(renderer, bottom_rect, savestate_notice);
          ticks.draw += SDL_GetPerformanceCounter() - start;
@@ -1912,7 +1913,7 @@ index 7d9d4eb..9304502 100644
          start = SDL_GetPerformanceCounter();
          SDL_RenderPresent(renderer);
          ticks.swap += SDL_GetPerformanceCounter() - start;
-@@ -2403,6 +3547,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2403,6 +3548,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      // rate directly; the sub-sample remainder is absorbed by the bounded queue
      // instead of producing a roughly once-per-second underrun at 32768 Hz.
      want.freq = kAudioFrequency;
@@ -1926,7 +1927,7 @@ index 7d9d4eb..9304502 100644
      want.format = AUDIO_S16SYS;
      want.channels = 2;
  #if !defined(NDS_HAVE_SDL3)
-@@ -2446,6 +3597,19 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2446,6 +3598,19 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          options.virtual_stylus.enabled && !mph_prime_controls_available;
      MphPrimeBindingSet mph_prime_bindings{};
      MphPadBindingSet mph_pad_bindings{};
@@ -1946,7 +1947,7 @@ index 7d9d4eb..9304502 100644
      if (mph_prime_controls_available) {
          mph_prime_bindings = make_mph_prime_bindings(options.mph_bindings);
          mph_pad_bindings = make_mph_pad_bindings(options.mph_pad_bindings);
-@@ -2520,7 +3684,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2520,7 +3685,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          nds_set_key_mask(static_cast<uint16_t>(
              0x0FFFu &
              ~(keyboard_pressed | controller_pressed | mouse_pressed |
@@ -1959,7 +1960,7 @@ index 7d9d4eb..9304502 100644
      };
      publish_keys();
      nds_set_touch(0, 0, false);
-@@ -2543,6 +3711,106 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2543,6 +3712,106 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      runtime_menu_config.items = runtime_menu_items;
      runtime_menu_config.item_count =
          sizeof(runtime_menu_items) / sizeof(runtime_menu_items[0]);
@@ -2066,7 +2067,7 @@ index 7d9d4eb..9304502 100644
      runtime_menu_config.callbacks.context = &runtime_menu_state;
      runtime_menu_config.callbacks.get_value = runtime_menu_get_value;
      runtime_menu_config.callbacks.set_value = runtime_menu_set_value;
-@@ -2552,6 +3820,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2552,6 +3821,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      runtime_menu_config.theme = "nds";
      runtime_menu_config.accept_label = "A / Enter";
      runtime_menu_config.back_label = "B / Backspace";
@@ -2077,7 +2078,7 @@ index 7d9d4eb..9304502 100644
      RecompRuntimeUi* runtime_ui =
          recomp_runtime_ui_create(&runtime_menu_config);
      if (!runtime_ui) {
-@@ -2561,6 +3833,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2561,6 +3834,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      bool mouse_down = false;
      bool touch_release_pending = false;
      uint32_t touch_frames_held = 0;
@@ -2092,7 +2093,7 @@ index 7d9d4eb..9304502 100644
      int64_t relative_delta_x = 0;
      int64_t relative_delta_y = 0;
      uint64_t relative_direct_writes = 0;
-@@ -3257,9 +4537,282 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3257,9 +4538,282 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  relative_mouse_selftest_stage = 10;
              }
          }
@@ -2375,7 +2376,7 @@ index 7d9d4eb..9304502 100644
              if (event.type == SDL_QUIT) {
                  release_relative_mouse();
                  running = false;
-@@ -3451,6 +5004,37 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3451,6 +5005,37 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  clear_virtual_stylus();
                  publish_keys();
              }
@@ -2413,7 +2414,7 @@ index 7d9d4eb..9304502 100644
              if (event.type == SDL_CONTROLLERBUTTONDOWN ||
                  event.type == SDL_CONTROLLERBUTTONUP) {
                  RecompRuntimeUiInput menu_input{};
-@@ -3707,10 +5291,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3707,10 +5292,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          if (controller) {
              // Left stick -> D-pad, with hysteresis so a stick resting near
              // a threshold never flickers a direction.
@@ -2430,7 +2431,7 @@ index 7d9d4eb..9304502 100644
              const bool menu_open = runtime_menu_open();
              if (menu_open) {
                  if (stick_pressed != 0) {
-@@ -3764,10 +5352,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3764,10 +5353,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                          publish_keys();
                      }
                  };
@@ -2451,7 +2452,7 @@ index 7d9d4eb..9304502 100644
              }
  
              if (!menu_open && virtual_stylus_available) {
-@@ -3818,7 +5416,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3818,7 +5417,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  }
              }
  
@@ -2464,7 +2465,7 @@ index 7d9d4eb..9304502 100644
                  // Right stick -> camera aim; triggers act as bindable
                  // pseudo-buttons (defaults: RT shoot, LT scan-fire).
                  const float rx = SDL_GameControllerGetAxis(
-@@ -3829,6 +5431,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3829,6 +5432,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                      controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 9830;
                  const bool trigger_left = SDL_GameControllerGetAxis(
                      controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 9830;
@@ -2474,7 +2475,7 @@ index 7d9d4eb..9304502 100644
                  if (trigger_right != mph_pad_trigger_right_held) {
                      mph_pad_trigger_right_held = trigger_right;
                      process_mph_prime_pad(MphPadInputKind::TriggerRight,
-@@ -3920,7 +5525,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3920,7 +5526,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  MphPrimeAction::VirtualStylus)];
          const bool generic_virtual_stylus = virtual_stylus_active();
  
@@ -2487,7 +2488,7 @@ index 7d9d4eb..9304502 100644
          if (turbo_want != turbo_active) {
              turbo_active = turbo_want;
              if (audio) {
-@@ -3937,6 +5546,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3937,6 +5547,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                           turbo_active ? "on" : "off");
          }
  
@@ -2508,7 +2509,7 @@ index 7d9d4eb..9304502 100644
          if ((relative_mouse.captured() || mph_prime_pad_engaged) &&
              options.relative_mouse_direct_aim &&
              !mph_prime_virtual_stylus &&
-@@ -3989,6 +5612,88 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3989,6 +5613,88 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                      nds_set_touch(128, 96, true);
              }
          }
@@ -2597,7 +2598,7 @@ index 7d9d4eb..9304502 100644
          if (options.custom_gamepad_bindings) {
              // Button events handle digital bindings; poll signed axes here.
              // Each row has one source, so clearing an axis row cannot release
-@@ -4186,8 +5891,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -4186,8 +5892,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  presentation, blend_cache.blended[0].data(), top_width,
                  blend_cache.blended[1].data(), bottom_width,
                  runtime_ui,
@@ -2609,7 +2610,7 @@ index 7d9d4eb..9304502 100644
                  savestate_notice.empty() ? nullptr : savestate_notice.c_str());
              if (!synthetic_ticks.ok) {
                  compute_failed = true;
-@@ -4210,14 +5916,18 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -4210,14 +5917,18 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
              presentation, top_pixels, top_width,
              bottom_pixels, bottom_width,
              runtime_ui,
@@ -5112,6 +5113,63 @@ index 942493b..d2ae143 100644
  const uint8_t* nds_vram_renderer_oam(int engine);
  
  // Renderer-only flattened address views. A non-null chunk points directly at
+diff --git a/runner/vendor/melonds/GPU3D.cpp b/runner/vendor/melonds/GPU3D.cpp
+index c97e275..53381d0 100644
+--- a/runner/vendor/melonds/GPU3D.cpp
++++ b/runner/vendor/melonds/GPU3D.cpp
+@@ -26,6 +26,17 @@
+ #include "Platform.h"
+ #include "GPU3D.h"
+ 
++#if defined(SRNX)
++// SonicRush-nx stage view: the 3D scene is drawn for a rectangle of the DS
++// screen's coordinate space (rx0, ry0, rw, rh, in DS pixels, larger than the
++// screen) squeezed into the 256x192 viewport, so 3D outside the DS screen
++// exists. x' = (x*ax + w*bx) >> 16, y' = (y*ay + w*by) >> 16 on clip
++// coordinates. "next" is set by the frontend, "cur" applies to the geometry
++// being sent, "render" to the frame being drawn.
++#include "srnx_remap.h"
++SrnxRemap g_srnx_remap_next{}, g_srnx_remap_cur{}, g_srnx_remap_render{};
++#endif
++
+ namespace melonDS
+ {
+ using Platform::Log;
+@@ -1478,6 +1489,14 @@ void GPU3D::SubmitVertex() noexcept
+         vertextrans->Position[0] = static_cast<s32>(
+             (static_cast<s64>(vertextrans->Position[0]) * 256) /
+             RenderWidth);
++#if defined(SRNX)
++    if (g_srnx_remap_cur.on)
++    {
++        const s64 w = vertextrans->Position[3];
++        vertextrans->Position[0] = static_cast<s32>((static_cast<s64>(vertextrans->Position[0]) * g_srnx_remap_cur.ax + w * g_srnx_remap_cur.bx) >> 16);
++        vertextrans->Position[1] = static_cast<s32>((static_cast<s64>(vertextrans->Position[1]) * g_srnx_remap_cur.ay + w * g_srnx_remap_cur.by) >> 16);
++    }
++#endif
+ 
+     // this probably shouldn't be.
+     // the way color is handled during clipping needs investigation. TODO
+@@ -2608,6 +2627,9 @@ void GPU3D::VBlank() noexcept
+ 
+                 RenderNumPolygons = NumPolygons;
+                 RenderFrameIdentical = false;
++#if defined(SRNX)
++                g_srnx_remap_render = g_srnx_remap_cur;
++#endif
+             }
+             else
+             {
+@@ -2648,6 +2670,9 @@ void GPU3D::VBlank() noexcept
+             NumVertices = 0;
+             NumPolygons = 0;
+             NumOpaquePolygons = 0;
++#if defined(SRNX)
++            g_srnx_remap_cur = g_srnx_remap_next;
++#endif
+ 
+             FlushRequest = 0;
+         }
 diff --git a/runner/vendor/melonds/GPU3D_CommandBatch.h b/runner/vendor/melonds/GPU3D_CommandBatch.h
 index 58c3a30..2717cc5 100644
 --- a/runner/vendor/melonds/GPU3D_CommandBatch.h
@@ -5144,3 +5202,26 @@ index 58c3a30..2717cc5 100644
          // Bounded ~7 MiB payload. Evict derived entries rather than growing
          // with a game's transient allocation history.
          const size_t wanted = size - offset;
+diff --git a/runner/vendor/melonds/srnx_remap.h b/runner/vendor/melonds/srnx_remap.h
+new file mode 100644
+index 0000000..7198fcc
+--- /dev/null
++++ b/runner/vendor/melonds/srnx_remap.h
+@@ -0,0 +1,17 @@
++#pragma once
++// SonicRush-nx: 3D projection remap for the stage view (see GPU3D.cpp).
++struct SrnxRemap {
++    int on = 0;
++    long long ax = 65536, bx = 0, ay = 65536, by = 0;   // 16.16
++    int rx0 = 0, ry0 = 0, rw = 256, rh = 192;           // DS-screen pixels covered
++};
++extern SrnxRemap g_srnx_remap_next, g_srnx_remap_cur, g_srnx_remap_render;
++// Fill the coefficients for a rectangle of the DS screen's pixel space.
++inline void srnx_remap_set(SrnxRemap& r, int rx0, int ry0, int rw, int rh) {
++    r.rx0 = rx0; r.ry0 = ry0; r.rw = rw; r.rh = rh;
++    r.ax = (256LL << 16) / rw;
++    r.bx = ((long long)(256 - 2 * rx0 - rw) << 16) / rw;
++    r.ay = (192LL << 16) / rh;
++    r.by = ((long long)(rh - 192 + 2 * ry0) << 16) / rh;
++    r.on = 1;
++}

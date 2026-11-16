@@ -42,7 +42,8 @@ struct SrnxWideParams {
     uint32_t off_bg, off_obj, off_bgpal, off_objpal, off_xpal, off_lay0, off_lay1, off_blk, off_spr, off_main;
     uint32_t main_valid;
     uint32_t out_pitch;            // GPU output row length in pixels (set by the presenter)
-    uint32_t pad[2];
+    uint32_t off_v3d;              // view-size 3D layer drawn by our own projection (v3d_valid)
+    uint32_t v3d_valid;
 };
 
 constexpr uint32_t kSrnxBgVram = 512 * 1024, kSrnxObjVram = 256 * 1024;
@@ -50,13 +51,15 @@ constexpr uint32_t kSrnxLayMax = 64 * 1024 * 2;        // layout bytes each (u16
 constexpr uint32_t kSrnxBlkMax = 2048 * 128;           // block data bytes
 constexpr uint32_t kSrnxSprMax = 384;                  // sprites (world + HUD)
 constexpr uint32_t kSrnxDataBytes = kSrnxBgVram + kSrnxObjVram + 512 + 512 + 2 * 8192 +
-                                    2 * kSrnxLayMax + kSrnxBlkMax + kSrnxSprMax * 16 + 256 * 192 * 4 + 4096;
+                                    2 * kSrnxLayMax + kSrnxBlkMax + kSrnxSprMax * 16 + 256 * 192 * 4 + 1024 * 512 * 4 + 4096;
 
 // Sprite entry in the data block: x, y (view pixels, top-left), attr0|attr1<<16, attr2.
 struct SrnxWideSpr { int32_t x, y; uint32_t a01, a2; };
 
 // True while a stage is on screen (our view applies).
 bool srnx_wide_stage_active();
+// Not on a stage (or the stage view is off): the 3D engine draws the DS screen again.
+void srnx_wide_inactive();
 // End of frame, emulation thread: update the camera and fill params + data
 // (data must hold kSrnxDataBytes). top/bottom are the DS screens as drawn.
 bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, const uint32_t* bottom);

@@ -57,7 +57,8 @@ bool Init()
     // CPU-cached: the 2D compositor reads the 3D output line by line, and
     // uncached reads cost about 2% of the emulation thread (native4 profile).
     // GetLine invalidates the CPU cache for a slot once the GPU is done.
-    ReadbackHeap.emplace(Device, 1024 * 1024 * 4, DkMemBlockFlags_CpuCached | DkMemBlockFlags_GpuCached, 64);
+    ReadbackHeap.emplace(Device, 1024 * 1024 * 20,  // SonicRush-nx: + 4 stage view 3D copies (3 MB each)
+                         DkMemBlockFlags_CpuCached | DkMemBlockFlags_GpuCached, 64);
     EmuCmdBuf = dk::CmdBufMaker{Device}.create();
     g_ready = true;
     std::fprintf(stderr, "[deko3d] device ready (%u embedded shaders)\n", g_nx_deko_shader_count);

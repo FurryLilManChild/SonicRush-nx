@@ -5,6 +5,7 @@
 #include "GPU3D_Deko.h"
 #include "GPU.h"
 #include "nx_deko.h"
+#include "srnx_remap.h"
 
 #include <assert.h>
 #include <cstdio>
@@ -154,6 +155,8 @@ bool DekoRenderer::InitRest()
     }
     for (int i = 0; i < HiresBuffers; i++)
         HiresOutputMemory[i] = NxDeko::DataHeap->Alloc(1024*768*4, 256);
+    for (int i = 0; i < HiresBuffers; i++)
+        StageReadback[i] = NxDeko::ReadbackHeap->Alloc(1024*768*4, 256);
 
     return true;
 }
@@ -931,7 +934,7 @@ void DekoRenderer::RenderFrame(GPU& gpu)
             it = TexCache.erase(it);
         }
     }
-    else if (gpu.GPU3D.RenderFrameIdentical && OutputSlot >= 0 && RequestedScale == CurScale)
+    else if (gpu.GPU3D.RenderFrameIdentical && OutputSlot >= 0 && RequestedScale == CurScale && !g_srnx_remap_render.on)
     {
         return;
     }
@@ -1478,6 +1481,19 @@ void DekoRenderer::RenderFrame(GPU& gpu)
         EmuCmdBuf.dispatchCompute(256/32, 192, 1);
         EmuCmdBuf.barrier(DkBarrier_Primitives, 0);
     }
+    // SonicRush-nx stage view: keep a CPU-readable copy of the render-size
+    // image (the native image at 1x) and the rectangle it covers.
+    BufStageOn[hiBuf] = g_srnx_remap_render.on;
+    BufScale[hiBuf] = CurScale;
+    if (g_srnx_remap_render.on)
+    {
+        BufRx0[hiBuf] = g_srnx_remap_render.rx0; BufRy0[hiBuf] = g_srnx_remap_render.ry0;
+        BufRw[hiBuf] = g_srnx_remap_render.rw; BufRh[hiBuf] = g_srnx_remap_render.rh;
+        const DkGpuAddr src = CurScale > 0 ? NxDeko::DataHeap->GpuAddr(HiresOutputMemory[hiBuf])
+                                           : NxDeko::ReadbackHeap->GpuAddr(FinalOutputMemory[curSlice]);
+        EmuCmdBuf.copyBuffer(src, NxDeko::ReadbackHeap->GpuAddr(StageReadback[hiBuf]), (uint32_t)ScrW * ScrH * 4);
+        EmuCmdBuf.barrier(DkBarrier_Full, DkInvalidateFlags_L2Cache);
+    }
     SlotScale[curSlice] = CurScale;
     SlotSerial[curSlice] = ++RenderSerial;
     StatRendered[CurScale]++;
@@ -1540,10 +1556,13 @@ void DekoRenderer::RenderFrame(GPU& gpu)
     }*/
 }
 
+// SonicRush-nx: render size forced while the stage view remap is on (-1: none).
+int g_srnx_scale_force = -1;
 void DekoRenderer::ApplyScale()
 {
-    if (RequestedScale == CurScale) return;
-    const int want = (RequestedScale >= 0 && RequestedScale <= 4) ? RequestedScale : 0;
+    const int req = g_srnx_scale_force >= 0 ? g_srnx_scale_force : RequestedScale;
+    if (req == CurScale) return;
+    const int want = (req >= 0 && req <= 4) ? req : 0;
     if (!SetLoaded[want]) return;   // that size's shaders are missing: keep the current one
     CurScale = want;
     S = &Sets[CurScale];
@@ -1626,6 +1645,11 @@ u32* DekoRenderer::GetLine(int line)
         LockSerial = SlotSerial[ShownSlot];
         // The GPU wrote this slot behind the CPU cache: drop stale lines.
         armDCacheFlush(NxDeko::ReadbackHeap->CpuAddr<void>(FinalOutputMemory[ShownSlot]), 256*192*4);
+        if (LockBuf >= 0 && BufStageOn[LockBuf])
+        {
+            static const int kW[5] = {256, 384, 512, 768, 1024}, kH[5] = {192, 288, 384, 576, 768};
+            armDCacheFlush(NxDeko::ReadbackHeap->CpuAddr<void>(StageReadback[LockBuf]), kW[BufScale[LockBuf]] * kH[BufScale[LockBuf]] * 4);
+        }
     }
     return NxDeko::ReadbackHeap->CpuAddr<u32>(FinalOutputMemory[ShownSlot]) + line * 256;
 }
@@ -1652,11 +1676,32 @@ Renderer3D* NxCreateDekoRenderer()
 
 }
 
+// SonicRush-nx stage view: the 3D image the 2D engine is showing this frame,
+// if it was drawn with the remap. px is in the 3D line format (RGB6, alpha5
+// at bit 24), w x h, covering DS-screen pixels (rx0, ry0) .. (+rw, +rh).
+bool nx_deko_stage_image(const uint32_t** px, int* w, int* h, int* rx0, int* ry0, int* rw, int* rh)
+{
+    melonDS::DekoRenderer* r = melonDS::g_nx_deko_renderer;
+    if (!r) return false;
+    const int b = r->StageLockBuf();
+    if (b < 0 || !r->BufStageOn[b]) return false;
+    static const int kW[5] = {256, 384, 512, 768, 1024}, kH[5] = {192, 288, 384, 576, 768};
+    *px = NxDeko::ReadbackHeap->CpuAddr<const uint32_t>(r->StageReadback[b]);
+    *w = kW[r->BufScale[b]]; *h = kH[r->BufScale[b]];
+    *rx0 = r->BufRx0[b]; *ry0 = r->BufRy0[b]; *rw = r->BufRw[b]; *rh = r->BufRh[b];
+    return true;
+}
+
 // Scale index 0 (1x), 1 (1.5x), 2 (2x); applied at the next 3D frame.
 void nx_deko_set_scale(int scale)
 {
     melonDS::g_nx_deko_scale_req = scale;
     if (melonDS::g_nx_deko_renderer) melonDS::g_nx_deko_renderer->RequestedScale = scale;
+}
+// SonicRush-nx stage view: force the render size (-1 returns to the menu's).
+void nx_deko_srnx_force_scale(int scale)
+{
+    melonDS::g_srnx_scale_force = scale;
 }
 // native8c diagnostics (scaler stats line)
 uint32_t nx_deko_serial()

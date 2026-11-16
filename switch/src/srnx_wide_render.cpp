@@ -49,6 +49,12 @@ const NdsVramRendererView* nds_vram_renderer_view(int engine);
 uint32_t nds_vram_read_bg(int engine, uint32_t addr, uint32_t width);
 uint32_t nds_vram_read_obj(int engine, uint32_t addr, uint32_t width);
 const uint32_t* nds_gpu2d_srnx_3d_frame(uint32_t* frames);
+// switch-test13: the 3D layer drawn for the whole view by our own projection
+// (deko renderer, Switch only; weak so the host build links without it).
+bool nx_deko_stage_image(const uint32_t** px, int* w, int* h, int* rx0, int* ry0, int* rw, int* rh) __attribute__((weak));
+void nx_deko_srnx_force_scale(int scale) __attribute__((weak));
+#include "srnx_remap.h"
+int g_srnx_own3d = 1;   // menu / env: 0 copies the DS screen's 3D (switch-test12 behaviour)
 
 int g_srnx_zoom = 0;
 int g_srnx_act_extra = 0, g_srnx_act_off = 0;   // host experiments
@@ -176,6 +182,11 @@ void srnx_wide_vblank() {
     l.ty = l.ok ? (float)((int32_t)NR_RD32(tgt + 0x14) >> 8) : 0.f;
 }
 
+void srnx_wide_inactive() {
+    g_srnx_remap_next.on = 0;
+    if (nx_deko_srnx_force_scale) nx_deko_srnx_force_scale(-1);
+}
+
 bool srnx_wide_stage_active() {
     const uint32_t dc = nds_gpu2d_read(0x04000000u, 4);
     if ((dc & 7) != 5 || (dc & 0x0C00) != 0x0C00 || !(dc & 8)) return false;
@@ -272,6 +283,7 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     p.off_blk = take(kSrnxBlkMax);
     p.off_spr = take(kSrnxSprMax * 16);
     p.off_main = take(256 * 192 * 4);
+    p.off_v3d = take(1024 * 512 * 4);
     if (off > kSrnxDataBytes) return false;
 
     const NdsVramRendererView* vv = nds_vram_renderer_view(0);
@@ -356,7 +368,44 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     const uint32_t* mainscr = (cam0y > cam1y) ? bottom : top;
     const uint32_t* f3d = nds_gpu2d_srnx_3d_frame(nullptr);
     p.main_valid = (mainscr && f3d && (p.dispcnt & 0x100)) ? 1u : 0u;
-    if (p.main_valid) {
+    p.v3d_valid = 0;
+    // Our own 3D: ask the 3D engine to draw the next frames for a rectangle
+    // around the view (in the DS screen's pixel space, margin for camera
+    // movement before they are shown), at the render size that covers it.
+    const bool own3d = g_srnx_own3d && nx_deko_stage_image && nx_deko_srnx_force_scale;
+    if (own3d) {
+        static const int kW[5] = {256, 384, 512, 768, 1024}, kH[5] = {192, 288, 384, 576, 768};
+        int sc = 4, m = 48;
+        for (int i = 1; i <= 4; ++i) {
+            const int mm = std::min({48, (kW[i] - VW) / 2, (kH[i] - VH) / 2});
+            if (mm >= 24) { sc = i; m = mm; break; }
+        }
+        nx_deko_srnx_force_scale(sc);
+        srnx_remap_set(g_srnx_remap_next, -p.main_x - m, -p.main_y - m, VW + 2 * m, VH + 2 * m);
+        const uint32_t* px; int w, h, rx0, ry0, rw, rh;
+        if (p.main_valid && nx_deko_stage_image(&px, &w, &h, &rx0, &ry0, &rw, &rh)) {
+            // view pixel (x, y) is DS pixel (x - main_x, y - main_y); fixed point steps
+            uint32_t* o = reinterpret_cast<uint32_t*>(data + p.off_v3d);
+            const int64_t sx = ((int64_t)w << 16) / rw, sy = ((int64_t)h << 16) / rh;
+            for (int y = 0; y < VH; ++y) {
+                const int64_t hy = ((int64_t)(y - p.main_y - ry0) * sy + sy / 2) >> 16;
+                uint32_t* row = o + (size_t)y * VW;
+                if (hy < 0 || hy >= h) { std::memset(row, 0, (size_t)VW * 4); continue; }
+                const uint32_t* src = px + hy * w;
+                int64_t fx = (int64_t)(-p.main_x - rx0) * sx + sx / 2;
+                for (int x = 0; x < VW; ++x, fx += sx) {
+                    const int64_t hx = fx >> 16;
+                    row[x] = (hx >= 0 && hx < w) ? src[hx] : 0u;
+                }
+            }
+            p.v3d_valid = 1;
+        }
+        SNAP_T(4);
+    } else {
+        g_srnx_remap_next.on = 0;
+        if (nx_deko_srnx_force_scale) nx_deko_srnx_force_scale(-1);
+    }
+    if (p.main_valid && !own3d) {
         std::memcpy(data + p.off_main, f3d, 256 * 192 * 4);
         SNAP_T(4);
         srnx_wide_align_main(p, data, mainscr);
@@ -559,8 +608,9 @@ uint32_t srnx_wide_pixel(const Src& s, int x, int y) {
     uint32_t c = below;
     // the 3D layer (BG0)
     const int mx = x - p.main_x, my = y - p.main_y;
-    if (p.main_valid && mx >= 0 && my >= 0 && mx < 256 && my < 192) {
-        const uint32_t t = s.u32(p.off_main + 4u * (uint32_t)(my * 256 + mx));
+    if (p.main_valid && (p.v3d_valid || (mx >= 0 && my >= 0 && mx < 256 && my < 192))) {
+        const uint32_t t = p.v3d_valid ? s.u32(p.off_v3d + 4u * (uint32_t)(y * p.view_w + x))
+                                       : s.u32(p.off_main + 4u * (uint32_t)(my * 256 + mx));
         const uint32_t a = (t >> 24) & 31;
         const int key3 = (int)(p.bgcnt[0] & 3) * 8 + 2;
         if (a && key3 < below_key) {
@@ -752,13 +802,15 @@ void srnx_wide_draw_cpu(const SrnxWideParams& p, const uint8_t* data, uint32_t* 
     // the 3D layer, inside its window
     if (p.main_valid) {
         const int key3 = (int)(p.bgcnt[0] & 3) * 8 + 2;
-        const int y0 = std::max(0, p.main_y), y1 = std::min(H, p.main_y + 192);
-        const int x0 = std::max(0, p.main_x), x1 = std::min(W, p.main_x + 256);
+        const bool v3 = p.v3d_valid != 0;   // our own view-size 3D layer
+        const int y0 = v3 ? 0 : std::max(0, p.main_y), y1 = v3 ? H : std::min(H, p.main_y + 192);
+        const int x0 = v3 ? 0 : std::max(0, p.main_x), x1 = v3 ? W : std::min(W, p.main_x + 256);
         for (int y = y0; y < y1; ++y) {
             uint32_t* o = out + (size_t)y * pitch;
             const uint8_t* k = g_key + (size_t)y * W;
             // row start such that row3 + 4 * x is pixel (x - main_x, y - main_y); signed, it can lie before the frame
-            const uint8_t* row3 = data + p.off_main + 4 * ((std::ptrdiff_t)(y - p.main_y) * 256 - p.main_x);
+            const uint8_t* row3 = v3 ? data + p.off_v3d + 4 * (size_t)y * W
+                                     : data + p.off_main + 4 * ((std::ptrdiff_t)(y - p.main_y) * 256 - p.main_x);
             for (int x = x0; x < x1; ++x) {
                 uint32_t t;
                 std::memcpy(&t, row3 + 4 * x, 4);

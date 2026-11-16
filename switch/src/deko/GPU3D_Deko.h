@@ -103,6 +103,15 @@ private:
     int SlotHires[2] = {0, 0};   // HiresOutputMemory index each slot rendered into
     int HiresNext = 0;
     int SlotScale[2] = {0, 0};
+    // SonicRush-nx stage view: a CPU-readable copy of each slot's render-size
+    // image while the 3D projection remap is on, and the remap it was drawn with.
+    // Indexed like HiresOutputMemory, so LockBuf protects it the same way.
+public:
+    GpuMemHeap::Allocation StageReadback[HiresBuffers];
+    int BufStageOn[HiresBuffers] = {}, BufScale[HiresBuffers] = {};
+    int BufRx0[HiresBuffers] = {}, BufRy0[HiresBuffers] = {}, BufRw[HiresBuffers] = {}, BufRh[HiresBuffers] = {};
+    int StageLockBuf() const { return LockBuf; }
+private:
     dk::Fence FinalOutputFence[2] = {};
     int OutputSlot = -1;      // slot holding the latest submitted frame
     int PrevSlot = -1;        // the frame before it (finished by now)
