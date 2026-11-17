@@ -14,7 +14,9 @@ def main():
     hi = int(sys.argv[4]) if len(sys.argv) > 4 else 10**9
     os.makedirs(out, exist_ok=True)
     f = open(src, 'rb')
-    assert f.read(8) == b'SRNXRPL1'
+    magic = f.read(8)
+    assert magic in (b'SRNXRPL1', b'SRNXRPL2')
+    v2 = magic == b'SRNXRPL2'
     count, vw, vh = struct.unpack('<3i', f.read(12))
     hsz = 12 * 4
     for i in range(count):
@@ -24,6 +26,8 @@ def main():
         v3 = f.read(vw * vh * 4)
         view = f.read(vw * vh * 4)
         spr = f.read(8192)
+        if v2:
+            f.read(256 * 1024)   # sprite memory as drawn
         if not (lo <= i <= hi):
             continue
         Image.frombuffer('RGBA', (vw, vh), view, 'raw', 'BGRA', 0, 1).convert('RGB').save(f'{out}/{i:03d}-view.png')

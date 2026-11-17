@@ -211,6 +211,18 @@ extern "C" void srnx_wide_cam_swapped() {
     ++g_srnx_cam_swaps;
 }
 
+// switch-test18: the game uploads this frame's sprite pictures after the
+// snapshot (at VBlank); copy sprite memory and palettes again one frame later
+// so each sprite is drawn with the pictures of its own frame.
+int g_srnx_obj_late = 1;
+void srnx_wide_refresh_obj(const SrnxWideParams& p, uint8_t* data) {
+    const NdsVramRendererView* vv = nds_vram_renderer_view(0);
+    const uint8_t* pal = nds_vram_renderer_palette(0);
+    if (!vv || !pal) return;
+    copy_vram(data + p.off_obj, vv->obj, 16, true);
+    std::memcpy(data + p.off_objpal, pal + 512, 512);
+}
+
 void srnx_wide_inactive() {
     g_srnx_remap_next.on = 0;
     if (nx_deko_srnx_force_scale) nx_deko_srnx_force_scale(-1);
@@ -336,12 +348,21 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
         uint8_t* af = data + p.off_spr + kSrnxAffOff;
         for (uint32_t g = 0; g < 32; ++g)
             for (uint32_t k = 0; k < 4; ++k) {
-                const uint16_t v = NR_RD16(kOamShadow + g * 32u + k * 8u + 6u);   // same frame as the sprite records
+                const uint16_t v = (uint16_t)(bus_read_u32_slow(0x07000000u + g * 32u + k * 8u + 4u) >> 16);   // hardware OAM (test16 source)
                 std::memcpy(af + (g * 4 + k) * 2, &v, 2);
             }
         const uint32_t bc = nds_gpu2d_read(0x04000050u, 2) & 0xFFFF, ba = nds_gpu2d_read(0x04000052u, 2) & 0xFFFF;
         std::memcpy(af + 256, &bc, 4);
         std::memcpy(af + 260, &ba, 4);
+        // switch-test18 diagnostic: two candidate rotation tables in the game's
+        // own memory (16-byte records, PA PB PC PD first), 8 groups each, for
+        // the replay to compare against the DS picture
+        for (uint32_t t = 0; t < 2; ++t)
+            for (uint32_t g = 0; g < 8; ++g)
+                for (uint32_t k = 0; k < 4; ++k) {
+                    const uint16_t v = NR_RD16((t ? 0x02089254u : 0x02087D2Cu) + g * 16u + k * 2u);
+                    std::memcpy(af + 272 + (t * 8 + g) * 8 + k * 2, &v, 2);
+                }
     }
     const NdsVramRendererView* vv = nds_vram_renderer_view(0);
     const uint8_t* pal = nds_vram_renderer_palette(0);

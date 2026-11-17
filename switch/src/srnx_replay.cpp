@@ -14,7 +14,7 @@
 #endif
 
 namespace {
-constexpr int kFrames = 120;          // about 2 seconds at 60 fps
+constexpr int kFrames = 120;          // about 2 seconds at 60 fps (about 175 MB with sprite memory)
 constexpr int kMaxSaves = 3;          // per session
 constexpr uint32_t kSprBytes = 8192;  // sprite records + affine table + blend registers
 
@@ -29,6 +29,7 @@ struct GameFrame {   // filled on the game thread
     std::vector<uint32_t> ds;    // 256 x 384: top screen, then bottom
     std::vector<uint32_t> v3d;   // vw x vh, our own 3D layer (RGB6, alpha5 at bit 24)
     std::vector<uint8_t> spr;    // kSprBytes
+    std::vector<uint8_t> obj;    // sprite memory as drawn (kSrnxObjVram)
 };
 struct ViewFrame {   // filled on the presenter thread
     uint32_t serial = 0;
@@ -52,6 +53,7 @@ void size_rings(int vw, int vh) {
         f.ds.assign(256 * 384, 0);
         f.v3d.assign((size_t)vw * vh, 0);
         f.spr.assign(kSprBytes, 0);
+        f.obj.assign(kSrnxObjVram, 0);
     }
     for (auto& f : g_view) { f.serial = 0; f.vw = vw; f.vh = vh; f.px.assign((size_t)vw * vh, 0); }
     g_game_next = g_view_next = 0;
@@ -80,7 +82,8 @@ void srnx_replay_record(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     const uint32_t n = std::min<uint32_t>(p.nspr + p.nhud, kSrnxSprMax);
     std::memset(f.spr.data(), 0, kSprBytes);
     std::memcpy(f.spr.data(), data + p.off_spr, n * 16);
-    std::memcpy(f.spr.data() + kSprBytes - 512, data + p.off_spr + kSrnxAffOff, 268);
+    std::memcpy(f.spr.data() + kSprBytes - 512, data + p.off_spr + kSrnxAffOff, 512);
+    std::memcpy(f.obj.data(), data + p.off_obj, kSrnxObjVram);
 }
 
 void srnx_replay_view(const SrnxWideParams& p, const uint8_t* data, const uint32_t* view, int pitch) {
@@ -114,7 +117,7 @@ int srnx_replay_save(char* msg, int msg_len) {
     // the presenter never drew it), sprites (8192 bytes)
     int count = 0;
     for (const auto& g : g_game) count += g.h.serial != 0;
-    std::fwrite("SRNXRPL1", 1, 8, f);
+    std::fwrite("SRNXRPL2", 1, 8, f);
     const int32_t hdr[3] = {count, g_vw, g_vh};
     std::fwrite(hdr, 4, 3, f);
     std::vector<uint32_t> zero((size_t)g_vw * g_vh, 0);
@@ -128,6 +131,7 @@ int srnx_replay_save(char* msg, int msg_len) {
         std::fwrite(g.v3d.data(), 4, g.v3d.size(), f);
         std::fwrite(v ? v->px.data() : zero.data(), 4, zero.size(), f);
         std::fwrite(g.spr.data(), 1, kSprBytes, f);
+        std::fwrite(g.obj.data(), 1, kSrnxObjVram, f);
     }
     std::fclose(f);
     ++g_saves;
