@@ -18,3 +18,6 @@ void srnx_replay_view(const SrnxWideParams& p, const uint8_t* data, const uint32
 int srnx_replay_save(char* msg, int msg_len);
 // Not on a stage: drop the ring (the next stage starts clean).
 void srnx_replay_reset();
+// switch-test19: outside the stage view (title, menus, bosses, special
+// stages): record both DS screens, the camera records, DISPCNT and POWCNT.
+void srnx_replay_record_ds(const uint32_t* top, const uint32_t* bottom);

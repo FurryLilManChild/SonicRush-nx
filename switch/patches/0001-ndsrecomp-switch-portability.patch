@@ -499,7 +499,7 @@ index 022a1af..8c31a75 100644
  #endif
      if (supported) {
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 7d9d4eb..02ecdd3 100644
+index 7d9d4eb..73a1ba6 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
 @@ -4,6 +4,7 @@
@@ -1687,9 +1687,9 @@ index 7d9d4eb..02ecdd3 100644
 +#if defined(__SWITCH__) && defined(MPHNX_DEKO3D) && !defined(NDS_HAVE_SDL3)
 +#if defined(SRNX)
 +    static bool srnx_cap_pending = false;
-+    if (g_nx_capture_req && g_nx_layout == kNxWide && srnx_wide_stage_active()) {
++    if (g_nx_capture_req && g_nx_layout == kNxWide) {
 +        g_nx_capture_req = false;
-+        srnx_cap_pending = true;          // saved below from this frame's stage view
++        srnx_cap_pending = true;          // switch-test19: a replay everywhere (stage view or both DS screens)
 +        g_nx_capture_msg_until = SDL_GetTicks64() + 2000;
 +    }
 +#endif
@@ -1765,13 +1765,13 @@ index 7d9d4eb..02ecdd3 100644
 +            g_srnx_wide = have ? 1 : 0;
 +            if (!have) srnx_wide_inactive();
 +            g_srnx_hide_hud = have ? 1 : 0;
-+            if (have && !was_stage) nx_present_wide_check(3);
++            if (have && !was_stage) { nx_present_wide_check(3); g_srnx_act_start = 1; }
 +            if (have) srnx_replay_record(wide_p, shown_d, top_pixels, bottom_pixels);
-+            else srnx_replay_reset();
++            else if (top_pixels && bottom_pixels) srnx_replay_record_ds(top_pixels, bottom_pixels);
 +            if (srnx_cap_pending) {
 +                srnx_cap_pending = false;
-+                // switch-test16: L3 saves the last 2 seconds (srnx_replay.h)
-+                if (have) srnx_replay_save(g_nx_capture_msg, sizeof g_nx_capture_msg);
++                // L3 saves the last 2 seconds (srnx_replay.h), in a stage or not
++                srnx_replay_save(g_nx_capture_msg, sizeof g_nx_capture_msg);
 +            }
 +            was_stage = have;
 +            if (have) {

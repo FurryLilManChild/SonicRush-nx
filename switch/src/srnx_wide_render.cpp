@@ -56,6 +56,8 @@ bool nx_deko_stage_image(const uint32_t** px, int* w, int* h, int* rx0, int* ry0
 void nx_deko_srnx_force_scale(int scale) __attribute__((weak));
 #include "srnx_remap.h"
 int g_srnx_own3d = 1;
+int g_srnx_act_start = 0;     // switch-test19: set on entering a stage (presenter opens the title card window)
+int g_srnx_card_bottom = 0;   // the main engine is on the bottom DS screen this frame
 int g_srnx_autocap = 0;          // switch-test15: 1 = Sonic without 3D, 2 = sudden mismatch (frontend saves a capture)
 unsigned g_srnx_cam_swaps = 0;   // camera-record swaps seen (log)
 static int g_rect_x, g_rect_y, g_rect_w = 0, g_rect_h = 0;
@@ -214,7 +216,7 @@ extern "C" void srnx_wide_cam_swapped() {
 // switch-test18: the game uploads this frame's sprite pictures after the
 // snapshot (at VBlank); copy sprite memory and palettes again one frame later
 // so each sprite is drawn with the pictures of its own frame.
-int g_srnx_obj_late = 1;
+int g_srnx_obj_late = 0;   // switch-test19: off; rpl-005 showed the late copy one frame ahead of the records
 void srnx_wide_refresh_obj(const SrnxWideParams& p, uint8_t* data) {
     const NdsVramRendererView* vv = nds_vram_renderer_view(0);
     const uint8_t* pal = nds_vram_renderer_palette(0);
@@ -444,6 +446,7 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     // the latched camera puts within a pixel or so; the DS screen's level
     // pixels settle the exact spot.
     const uint32_t* mainscr = (cam0y > cam1y) ? bottom : top;
+    g_srnx_card_bottom = cam0y > cam1y ? 1 : 0;
     const uint32_t* f3d = nds_gpu2d_srnx_3d_frame(nullptr);
     p.main_valid = (mainscr && f3d && (p.dispcnt & 0x100)) ? 1u : 0u;
     p.v3d_valid = 0;
@@ -577,6 +580,14 @@ bool bg_pixel(const Src& s, int bg, int x, int y, uint16_t& col) {
 }
 
 // sprite colour at view pixel; prio out; false = none
+// A rotation/scale matrix that shrinks or magnifies by more than 4x is taken
+// as stale or wrong data: one texel stretched over the whole box drew solid
+// blocks in the boost effect (rpl-004).
+bool aff_ok(int pa, int pb, int pc, int pd) {
+    const int n1 = pa * pa + pc * pc, n2 = pb * pb + pd * pd;
+    return n1 >= 64 * 64 && n1 <= 1024 * 1024 && n2 >= 64 * 64 && n2 <= 1024 * 1024;
+}
+
 bool spr_pixel(const Src& s, uint32_t first, uint32_t count, int x, int y, uint16_t& col, int& prio) {
     const SrnxWideParams& p = s.p;
     const bool one_d = p.dispcnt & 0x10;
@@ -602,8 +613,10 @@ bool spr_pixel(const Src& s, uint32_t first, uint32_t count, int x, int y, uint1
         if (rs) {
             const int16_t* af = reinterpret_cast<const int16_t*>(s.d + p.off_spr + kSrnxAffOff) + ((a1 >> 9) & 31) * 4;
             const int cx = xx - bw / 2, cy = yy - bh / 2;
-            xx = ((af[0] * cx + af[1] * cy) >> 8) + w / 2;
-            yy = ((af[2] * cx + af[3] * cy) >> 8) + h / 2;
+            int pa = af[0], pb = af[1], pc = af[2], pd = af[3];
+            if (!aff_ok(pa, pb, pc, pd)) { pa = pd = 256; pb = pc = 0; }
+            xx = ((pa * cx + pb * cy) >> 8) + w / 2;
+            yy = ((pc * cx + pd * cy) >> 8) + h / 2;
             if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
         }
         if (!rs && (a1 & 0x1000)) xx = w - 1 - xx;
@@ -777,7 +790,8 @@ void draw_sprites(const Src& s, uint32_t first, uint32_t count, int W, int H) {
         const uint16_t semi = (((a0 >> 10) & 3) == 1) ? 0x8000 : 0;
         if (rs) {
             const int16_t* af = reinterpret_cast<const int16_t*>(s.d + p.off_spr + kSrnxAffOff) + ((a1 >> 9) & 31) * 4;
-            const int pa = af[0], pb = af[1], pc = af[2], pd = af[3];
+            int pa = af[0], pb = af[1], pc = af[2], pd = af[3];
+            if (!aff_ok(pa, pb, pc, pd)) { pa = pd = 256; pb = pc = 0; }   // switch-test19: no blown-up blocks
             const bool bpp8r = a0 & 0x2000;
             const uint32_t tile = a2 & 0x3FF, palbase = bpp8r ? 0 : (a2 >> 12) * 16;
             for (int yy = std::max(0, -sy); yy < bh && sy + yy < H; ++yy) {

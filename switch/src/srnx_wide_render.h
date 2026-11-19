@@ -66,6 +66,7 @@ void srnx_wide_inactive();
 // switch-test18: copy sprite memory again (one frame after the snapshot).
 void srnx_wide_refresh_obj(const SrnxWideParams& p, uint8_t* data);
 extern int g_srnx_obj_late;
+extern int g_srnx_act_start, g_srnx_card_bottom;
 extern int g_srnx_autocap;
 extern unsigned g_srnx_cam_swaps;
 // End of frame, emulation thread: update the camera and fill params + data

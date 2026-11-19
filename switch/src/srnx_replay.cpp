@@ -9,6 +9,9 @@
 #include <vector>
 #include <sys/stat.h>
 
+extern "C" uint32_t bus_read_u32_slow(uint32_t addr);
+uint32_t nds_gpu2d_read(uint32_t addr, uint32_t width);
+
 #ifndef MPHNX_APP_DIR
 #define MPHNX_APP_DIR "."
 #endif
@@ -84,6 +87,24 @@ void srnx_replay_record(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     std::memcpy(f.spr.data(), data + p.off_spr, n * 16);
     std::memcpy(f.spr.data() + kSprBytes - 512, data + p.off_spr + kSrnxAffOff, 512);
     std::memcpy(f.obj.data(), data + p.off_obj, kSrnxObjVram);
+}
+
+void srnx_replay_record_ds(const uint32_t* top, const uint32_t* bottom) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (!g_vw) size_rings(424, 240);
+    const uint32_t serial = ++g_serial;
+    GameFrame& f = g_game[g_game_next];
+    g_game_next = (g_game_next + 1) % kFrames;
+    // world_x/world_y: camera record 0 x/y, main_x/main_y: record 1 x/y (pixels),
+    // dispcnt: engine A DISPCNT, v3d_valid: 0, pad: POWCNT1 | 0xD5000000 (not a stage frame)
+    auto cam = [](uint32_t a) { return (int32_t)bus_read_u32_slow(a) >> 8; };
+    f.h = Head{serial, g_vw, g_vh, cam(0x0236AADCu), cam(0x0236AAE0u), cam(0x0236AB40u), cam(0x0236AB44u), 0, 0,
+               nds_gpu2d_read(0x04000000u, 4), 0, (bus_read_u32_slow(0x04000304u) & 0xFFFF) | 0xD5000000u};
+    std::memcpy(f.ds.data(), top, 256 * 192 * 4);
+    std::memcpy(f.ds.data() + 256 * 192, bottom, 256 * 192 * 4);
+    std::memset(f.v3d.data(), 0, f.v3d.size() * 4);
+    std::memset(f.spr.data(), 0, kSprBytes);
+    std::memset(f.obj.data(), 0, kSrnxObjVram);
 }
 
 void srnx_replay_view(const SrnxWideParams& p, const uint8_t* data, const uint32_t* view, int pitch) {
