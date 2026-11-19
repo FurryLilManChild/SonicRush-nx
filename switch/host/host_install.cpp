@@ -1,5 +1,7 @@
 #include <chrono>
-int srnx_code_frame();   // srnx_wide_render.cpp (file scope: the hooks below sit in an anonymous namespace)
+int srnx_code_frame();
+extern uint32_t g_srnx_codelist[];
+extern int g_srnx_codelist_n;   // srnx_wide_render.cpp (file scope: the hooks below sit in an anonymous namespace)
 // SonicRush-nx host boot test (from MPH-nx): install the native ARM9 engine before upstream
 // main() runs (the Switch build does this from nx_main.cpp).
 //   NR_DISABLE=1        leave it out: the ARM9 runs on upstream's interpreter
@@ -370,6 +372,13 @@ void round_hook(uint64_t cyc) {
             next = cyc + 1120380ull;
             const int sc = srnx_code_frame();
             if (sc != last) { std::fprintf(stderr, "[codescene] %.0fM scene %d\n", cyc / 1e6, sc); last = sc; }
+            // NR_CODELIST=1: every frame's list of overlay functions that ran
+            static int cl = -1; if (cl < 0) cl = std::getenv("NR_CODELIST") ? 1 : 0;
+            if (cl) {
+                std::fprintf(stderr, "[codelist] %.0f", cyc / 1e6);
+                for (int i = 0; i < g_srnx_codelist_n; ++i) std::fprintf(stderr, " %08X", g_srnx_codelist[i]);
+                std::fprintf(stderr, "\n");
+            }
         }
     }
     play_hook(cyc);

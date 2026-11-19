@@ -290,6 +290,8 @@ extern "C" void nr_state_restart(void) { if (g_arm9_started) g_nr_restart = true
 static void nr_take_irq(uint32_t resume);
 static void nr_irq_exit();
 extern const uint32_t NR_IRQ_RET;
+extern const uint32_t NR_WAIT_RET;
+static void nr_wait_continue();
 
 // Service point: the native code reached its fast limit (slice end, device
 // deadline, or a state change asking for a re-poll). R15 holds the resume PC.
@@ -306,6 +308,16 @@ extern "C" void nr_service(void) {
     }
     const uint32_t resume = g_cpu.R[15];
     g_nr_last_pc = resume | ((g_cpu.cpsr & CPSR_T_BIT) ? 1u : 0u);
+    {   // host diagnostic: NR_PCSAMPLE=from-to logs the cycle and PC at each
+        // service in that window (where emulated time goes)
+        static long long from = -2, to = 0;
+        if (from == -2) {
+            const char* e = std::getenv("NR_PCSAMPLE");
+            if (!e || std::sscanf(e, "%lld-%lld", &from, &to) != 2) from = -1;
+        }
+        if (from >= 0 && g_runtime_cycles >= (unsigned long long)from && g_runtime_cycles < (unsigned long long)to)
+            std::fprintf(stderr, "[pcs] %llu %08X\n", (unsigned long long)g_runtime_cycles, g_nr_last_pc);
+    }
 #if defined(SRNX_HOST_PROFILE)
     {   // host diagnostic: where services happen (NR_SVC_HIST=1)
         static int on = -1; if (on < 0) on = std::getenv("NR_SVC_HIST") ? 1 : 0;
@@ -477,6 +489,7 @@ static void nr_run(uint32_t key) {
     for (;;) {
         nr_redirect = 0;
         if (g_cpu.R[15] == NR_IRQ_RET) { nr_irq_exit(); continue; }
+        if (g_cpu.R[15] == NR_WAIT_RET) { nr_wait_continue(); continue; }
         const uint32_t k = cur_key();
         if (NrFn fn = nr_lookup(k)) {
             fn(k & ~1u);
@@ -500,6 +513,13 @@ extern "C" void nr_call_dyn(uint32_t target) {
     bool first = true;
     for (;;) {
         if (g_cpu.R[15] == NR_IRQ_RET && ret != NR_IRQ_RET) { nr_irq_exit(); nr_redirect = 0; continue; }
+        if (g_cpu.R[15] == NR_WAIT_RET) {
+            nr_wait_continue();
+            if (nr_redirect == 1) return;
+            nr_redirect = 0;
+            if (g_cpu.R[15] == ret) return;
+            continue;
+        }
         const uint32_t k = cur_key();
         if (NrFn fn = nr_lookup(k)) {
             fn(k & ~1u);
@@ -543,6 +563,8 @@ static inline void wr32(uint32_t a, uint32_t v) {
 // sees this address runs the epilogue, so a handler that was unwound to the
 // top loop (thread switch, redirect) still returns correctly.
 extern const uint32_t NR_IRQ_RET = 0xFFFF0FF0u;
+// An interrupt taken inside IntrWait returns here; see swi_intr_wait.
+extern const uint32_t NR_WAIT_RET = 0xFFFF0FE0u;
 
 // BIOS: LDMFD sp!, {r0-r3, r12, lr}; SUBS pc, lr, #4
 static void nr_irq_exit() {
@@ -650,9 +672,26 @@ static void swi_intr_wait(bool discard, uint32_t mask) {
     bus_write_u32_slow(0x04000208u, 1u);   // IME = 1
     if (discard) wr32(flags_addr, rd32(flags_addr) & ~mask);
     const uint32_t resume = g_cpu.R[15];
+    const uint32_t r1_in = g_cpu.R[1], r12_in = g_cpu.R[12];
     for (;;) {
         const uint32_t f = rd32(flags_addr);
-        if (f & mask) { wr32(flags_addr, f & ~mask); return; }
+        if (f & mask) {
+            wr32(flags_addr, f & ~mask);
+            g_cpu.R[15] = resume; g_cpu.R[1] = r1_in; g_cpu.R[12] = r12_in;
+            return;
+        }
+        // On the DS the BIOS halts inside its own wait loop, so an interrupt
+        // returns into that loop and the flags are checked again. Here an
+        // interrupt taken during the halt returns to NR_WAIT_RET with the wait
+        // kept in the registers the IRQ entry saves (r1 mask, r12 resume PC),
+        // so the wait carries on, even across a thread switch. Returning to
+        // the instruction after the SWI instead ended VBlankIntrWait on any
+        // interrupt: on the world map a card or timer interrupt every 15th
+        // frame started the frame about 100 lines early, BLDCNT was cleared
+        // mid-frame and the map flickered (SonicRush-nx switch-test28).
+        g_cpu.R[1] = mask;
+        g_cpu.R[12] = resume | ((g_cpu.cpsr & CPSR_T_BIT) ? 1u : 0u);
+        g_cpu.R[15] = NR_WAIT_RET;
         // The BIOS waits with interrupts enabled.
         const uint32_t cpsr = g_cpu.cpsr;
         g_cpu.cpsr &= ~CPSR_I_BIT;
@@ -663,10 +702,25 @@ static void swi_intr_wait(bool discard, uint32_t mask) {
         // this wait with the handler's: the game resumed at 0x0200007C in ARM
         // IRQ mode and froze (zone 2 start, SonicRush-nx switch-test28; host
         // trace: two "irq take at 0200007C", the second with cpsr 20000092).
-        if (!nr_redirect && !(g_cpu.cpsr & CPSR_I_BIT) && nds_irq_pending(0)) nr_take_irq(resume);
-        if (nr_redirect) return;   // a handler is running: leave its state alone
+        if (!nr_redirect && !(g_cpu.cpsr & CPSR_I_BIT) && nds_irq_pending(0)) nr_take_irq(NR_WAIT_RET);
+        if (nr_redirect) {   // a handler is running: leave its state alone
+            static int tr = -1; if (tr < 0) tr = std::getenv("NR_WAITTRACE") ? 1 : 0;
+            if (tr) std::fprintf(stderr, "[wait] redirect out of IntrWait at %llu flags %08X mask %08X\n",
+                                 (unsigned long long)g_runtime_cycles, rd32(flags_addr), mask);
+            return;
+        }
         g_cpu.cpsr = (g_cpu.cpsr & ~CPSR_I_BIT) | (cpsr & CPSR_I_BIT);
     }
+}
+
+// Back in an IntrWait after an interrupt (NR_WAIT_RET): r12 holds the PC
+// after the SWI, r1 the mask. Wait again without discarding the flags.
+static void nr_wait_continue() {
+    const uint32_t r = g_cpu.R[12];
+    if (r & 1u) g_cpu.cpsr |= CPSR_T_BIT; else g_cpu.cpsr &= ~CPSR_T_BIT;
+    g_cpu.R[15] = r & ~1u;
+    nr_redirect = 0;
+    swi_intr_wait(false, g_cpu.R[1]);
 }
 
 // Memory helpers for SWIs: page table first, the bus (with overlay
@@ -912,7 +966,21 @@ static void swi_wait_by_loop() {
     if (g_runtime_cycles >= g_nds_fast_limit) nr_service();
 }
 
+extern "C" void nr_swi_inner(uint32_t num);
 extern "C" void nr_swi(uint32_t num) {
+    // host diagnostic: NR_SWI_TRACE=from-cycle logs each SWI with its cost
+    static long long from = -2;
+    if (from == -2) { const char* e = std::getenv("NR_SWI_TRACE"); from = e ? std::atoll(e) : -1; }
+    if (from >= 0 && g_runtime_cycles >= (unsigned long long)from) {
+        const unsigned long long t0 = g_runtime_cycles;
+        const uint32_t a0 = g_cpu.R[0], a1 = g_cpu.R[1], a2 = g_cpu.R[2];
+        nr_swi_inner(num);
+        std::fprintf(stderr, "[swi] %02X r0 %08X r1 %08X r2 %08X at %llu cost %llu\n", num, a0, a1, a2, t0, g_runtime_cycles - t0);
+        return;
+    }
+    nr_swi_inner(num);
+}
+extern "C" void nr_swi_inner(uint32_t num) {
     switch (num) {
     case 0x06: ++g_nr_stats[NR_STAT_SWI_HLE]; {           // Halt
         const uint32_t resume = g_cpu.R[15];

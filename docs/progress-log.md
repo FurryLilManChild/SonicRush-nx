@@ -1,5 +1,13 @@
 # Progress log (newest first)
 
+## 2026-11-19: switch-test29
+
+- Zone 2 freeze (test28, after the act title card): an interrupt taken twice in one IntrWait overwrote the wait's saved state with the handler's; the game resumed at 0x0200007C in IRQ mode and stopped. Fixed in swi_intr_wait (commit 3de3bd8). Host, Mark's save: Water Palace act 1 plays, timer runs.
+- World map flicker (test28): the game waits for VBlank once a frame through the BIOS (0x02000078: svc 5). The BIOS halts inside its own loop, so any other interrupt returns into the loop. The port returned to the instruction after the svc, which ended the wait on any interrupt. Host trace: every 15th frame the wait ended with flags 0x808 (VBlank bit clear, timer/DMA interrupt from file loading), the next frame started at line 79-92 instead of 192 and BLDCNT was cleared mid-picture. Fix: an interrupt taken in the wait returns to NR_WAIT_RET with the mask in r1 and the resume PC in r12 (saved by the IRQ entry and by thread switches), and the wait continues. Host: 1035 of 1035 world map frames start at line 192 (before: 4 early in 53).
+- Act title card: new code-identified screen 14 (overlay 0 0x023470A0 running and the stage update 0x0233D588 not yet seen), drawn as one tall picture of both screens like character select. Host: scene 14 from 3441M to 3754M, exactly the card. Only checked on zone 2 act 1 as Sonic.
+- Roots: zone 2 misses from Mark's test28 log and the host run added (463 to 519 roots); host misses on the save route 62 to 24.
+- Host diagnostics: NR_PCSAMPLE, NR_WAITTRACE, NR_CODELIST.
+
 ## 2026-11-18: switch-test19
 
 - Stage view locked: the stacked-screen fallback (wide_mismatch) is gone. Only at an act start, while the stage view does not match either DS screen, the act title card is shown as the main engine's DS screen scaled to the view height and centred (option b). The window closes after 8 matching frames or 15 seconds.

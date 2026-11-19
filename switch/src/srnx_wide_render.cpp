@@ -1070,6 +1070,22 @@ int srnx_code_frame() {
     int scene = 0;
     for (const Sig& g : sigs)
         if (g.idx >= 0 && g_nr_ovstamp[g.ov][g.idx] == s) { scene = g.scene; break; }
+    // switch-test29: a stage's act title card (zone name above, "Ready?" and
+    // the character below: one picture across both screens). Its task
+    // (overlay 0 0x023470A0) runs from the card's first frame until "Go!" has
+    // gone; the stage's own update (overlay 0 0x0233D588) starts as the card
+    // fades out and then runs every other frame, so the card ends at the
+    // first frame it runs and stays ended while the card task lasts (host
+    // trace, zone 2 act 1 as Sonic, 2026-11-19).
+    {
+        static int card = -2, play = -2;
+        static bool played = false;
+        if (card == -2) { card = ovfn_index(0, 0x023470A0u); play = ovfn_index(0, 0x0233D588u); }
+        const bool card_ran = card >= 0 && g_nr_ovstamp[0][card] == s;
+        if (!card_ran) played = false;
+        else if (play >= 0 && g_nr_ovstamp[0][play] == s) played = true;
+        if (!scene && card_ran && !played) scene = 14;
+    }
     ++g_nr_ovserial;
     return scene;
 }
@@ -1212,7 +1228,7 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
             mode = want; run = 0;
             static const char* names[] = {"off", "special stage", "boss", "top screen", "bottom screen",
                                           "special stage intro", "emerald result", "both screens shrunk",
-                                          "logos", "title", "main menu", "world map", "character select", "boss title card"};
+                                          "logos", "title", "main menu", "world map", "character select", "boss title card", "act title card"};
             std::fprintf(stderr, "[srnx] one-screen layout: %s\n", names[mode]);
         }
     } else run = 0;
@@ -1249,7 +1265,7 @@ void put_top_full(const uint32_t* src, uint32_t* out, int pitch) {
 void srnx_special_compose(int mode, const uint32_t* top, const uint32_t* bottom, uint32_t* out, int pitch) {
     if (mode == 3) { put_top_full(top, out, pitch); return; }
     if (mode == 4 || mode == 5) { put_top_full(bottom, out, pitch); return; }   // the bottom screen, same scaling
-    if ((mode >= 7 && mode <= 10) || mode == 12 || mode == 13) {
+    if ((mode >= 7 && mode <= 10) || mode == 12 || mode == 13 || mode == 14) {
         // one tall picture: rows y0..y1 of the 256x384 column, scaled to 240
         // high and centred; the sides are filled with each row's edge pixels
         int y0 = 0, y1 = 384;
