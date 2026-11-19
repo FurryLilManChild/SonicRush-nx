@@ -163,6 +163,16 @@ unsigned nx_clocks_cpu_mhz(void) {
     if (!g_clk_open) return 0;
     u32 now = 0;
     clkrstGetClockRate(&g_cpu_session, &now);
+    // SonicRush-nx switch-test24: on 2026-11-19 the clock fell from 1785 to
+    // 1020 MHz mid-play with nothing in the port asking for it (the boss ran
+    // at about 50 fps). Put the port's setting back and say so.
+    if (g_cpu_applied_hz > 1020000000u && now + 50000000u < g_cpu_applied_hz) {
+        const u32 was = now;
+        clkrstSetClockRate(&g_cpu_session, g_cpu_applied_hz);
+        clkrstGetClockRate(&g_cpu_session, &now);
+        printf("[mph-nx] cpu clock was %u MHz, not the %u MHz the port set (changed outside the port); set again, reads back %u MHz\n",
+               was / 1000000u, g_cpu_applied_hz / 1000000u, now / 1000000u);
+    }
     return now / 1000000u;
 }
 unsigned nx_clocks_gpu_mhz(void) {
