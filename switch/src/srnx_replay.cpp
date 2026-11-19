@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 
 extern "C" uint32_t bus_read_u32_slow(uint32_t addr);
+extern uint32_t g_srnx_touch_word;   // io.cpp: x | y << 8 | down << 16
 uint32_t nds_gpu2d_read(uint32_t addr, uint32_t width);
 
 #ifndef MPHNX_APP_DIR
@@ -98,7 +99,7 @@ void srnx_replay_record_ds(const uint32_t* top, const uint32_t* bottom) {
     // world_x/world_y: camera record 0 x/y, main_x/main_y: record 1 x/y (pixels),
     // dispcnt: engine A DISPCNT, v3d_valid: 0, pad: POWCNT1 | 0xD5000000 (not a stage frame)
     auto cam = [](uint32_t a) { return (int32_t)bus_read_u32_slow(a) >> 8; };
-    f.h = Head{serial, g_vw, g_vh, cam(0x0236AADCu), cam(0x0236AAE0u), cam(0x0236AB40u), cam(0x0236AB44u), 0, 0,
+    f.h = Head{serial, g_vw, g_vh, cam(0x0236AADCu), cam(0x0236AAE0u), cam(0x0236AB40u), cam(0x0236AB44u), g_srnx_touch_word, 0,
                nds_gpu2d_read(0x04000000u, 4), 0, (bus_read_u32_slow(0x04000304u) & 0xFFFF) | 0xD5000000u};
     std::memcpy(f.ds.data(), top, 256 * 192 * 4);
     std::memcpy(f.ds.data() + 256 * 192, bottom, 256 * 192 * 4);

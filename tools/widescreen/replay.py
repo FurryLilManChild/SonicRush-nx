@@ -34,7 +34,8 @@ def main():
         if ds_only:
             # cam0 x/y in wx/wy, cam1 x/y in mx/my; POWCNT1 bit 15 = engine A on the top screen, bit 3 = 3D on
             print(f'{i:03d} serial {serial} DS only: cam0 ({wx},{wy}) cam1 ({mx},{my}) DISPCNT {dispcnt:08X} '
-                  f'POWCNT1 {pad & 0xFFFF:04X} (engine A on {"top" if pad & 0x8000 else "bottom"}, 3D {"on" if pad & 8 else "off"})')
+                  f'POWCNT1 {pad & 0xFFFF:04X} (engine A on {"top" if pad & 0x8000 else "bottom"}, 3D {"on" if pad & 8 else "off"}) '
+                  f'touch {"%d,%d" % (nspr & 255, (nspr >> 8) & 255) if nspr & 0x10000 else "up"}')
             Image.frombuffer('RGBA', (256, 384), ds, 'raw', 'BGRA', 0, 1).convert('RGB').save(f'{out}/{i:03d}-ds.png')
             continue
         Image.frombuffer('RGBA', (vw, vh), view, 'raw', 'BGRA', 0, 1).convert('RGB').save(f'{out}/{i:03d}-view.png')
