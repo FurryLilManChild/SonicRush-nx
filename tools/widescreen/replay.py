@@ -37,6 +37,12 @@ def main():
                   f'POWCNT1 {pad & 0xFFFF:04X} (engine A on {"top" if pad & 0x8000 else "bottom"}, 3D {"on" if pad & 8 else "off"}) '
                   f'touch {"%d,%d" % (nspr & 255, (nspr >> 8) & 255) if nspr & 0x10000 else "up"}')
             Image.frombuffer('RGBA', (256, 384), ds, 'raw', 'BGRA', 0, 1).convert('RGB').save(f'{out}/{i:03d}-ds.png')
+            # switch-test27: overlay functions that ran this frame
+            n = struct.unpack_from('<I', spr, 0)[0]
+            if 0 < n < 2047:
+                fns = struct.unpack_from('<%dI' % n, spr, 4)
+                with open(f'{out}/{i:03d}-fns.txt', 'w') as fh:
+                    fh.write('\n'.join('ov%02d %08X' % (1 if a >> 31 else 0, a & 0x7FFFFFFF) for a in fns) + '\n')
             continue
         Image.frombuffer('RGBA', (vw, vh), view, 'raw', 'BGRA', 0, 1).convert('RGB').save(f'{out}/{i:03d}-view.png')
         Image.frombuffer('RGBA', (256, 384), ds, 'raw', 'BGRA', 0, 1).convert('RGB').save(f'{out}/{i:03d}-ds.png')

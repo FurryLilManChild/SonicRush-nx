@@ -75,10 +75,16 @@ extern int g_srnx_act_start, g_srnx_card_bottom;
 // 0 none, 1 special stage, 2 boss fight (top screen, health gauge upright in
 // the right bar), 3 top screen, 4 bottom screen, 5 special stage intro
 // (bottom screen), 6 emerald result (bottom screen, banner, emerald ring).
-// 7 both screens shrunk (the fallback), 8 logos, 9 title, 10 main menu.
+// 7 both screens shrunk (the fallback), 8 logos, 9 title, 10 main menu, 11 world map.
 // switch-test26: never stacked; an unrecognised screen is 7.
 extern int g_srnx_special;
-int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_on_top);
+int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_on_top, int code_scene);
+// switch-test27: once a frame, which overlay functions ran (g_srnx_codelist,
+// address | 0x80000000 for overlay 1) and the screen they identify (8 logos,
+// 9 title, 10 main menu, 0 not known by code).
+int srnx_code_frame();
+extern uint32_t g_srnx_codelist[1800];
+extern int g_srnx_codelist_n;
 // switch-test22: the numbered circle the game highlights next during a
 // special-stage jump (its 0x0871FB fill), in DS bottom-screen pixels. Kept for
 // 30 frames through the highlight's blink. False when there is none.

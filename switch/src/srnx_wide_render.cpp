@@ -1011,6 +1011,53 @@ void srnx_wide_draw_cpu(const SrnxWideParams& p, const uint8_t* data, uint32_t* 
 // switch-test20: special stages
 int g_srnx_special = 0;
 
+// switch-test27: screens told apart by the game's own code. Every overlay
+// function stamps the frame serial on entry (NR_OVSTAMP); once a frame the port
+// reads which ran. Overlay 1 is the front end (logos, title, menus), overlay 0
+// the stages (host traces, 2026-11-19).
+extern "C" {
+extern uint32_t g_nr_ovstamp[2][8192];
+extern uint32_t g_nr_ovserial;
+extern const uint32_t nr_ovfn_00[], nr_ovfn_01[];
+extern const unsigned nr_ovfn_count_00, nr_ovfn_count_01;
+}
+uint32_t g_srnx_codelist[1800];
+int g_srnx_codelist_n = 0;
+namespace {
+int ovfn_index(int ov, uint32_t addr) {
+    const uint32_t* t = ov ? nr_ovfn_01 : nr_ovfn_00;
+    const unsigned n = ov ? nr_ovfn_count_01 : nr_ovfn_count_00;
+    for (unsigned i = 0; i < n; ++i) if (t[i] == addr) return (int)i;
+    return -1;
+}
+}
+int srnx_code_frame() {
+    static int i_logos = -2, i_title, i_menu;
+    if (i_logos == -2) {
+        // each screen's own per-frame function (overlay 1, Thumb)
+        i_logos = ovfn_index(1, 0x022CF661u);
+        i_title = ovfn_index(1, 0x022D4539u);
+        i_menu = ovfn_index(1, 0x022D7C05u);
+        std::fprintf(stderr, "[srnx] screen code: logos %d title %d menu %d (overlay 1 has %u functions, overlay 0 %u)\n",
+                     i_logos, i_title, i_menu, nr_ovfn_count_01, nr_ovfn_count_00);
+    }
+    const uint32_t s = g_nr_ovserial;
+    int n = 0;
+    for (int ov = 0; ov < 2; ++ov) {
+        const uint32_t* t = ov ? nr_ovfn_01 : nr_ovfn_00;
+        const unsigned cnt = std::min(ov ? nr_ovfn_count_01 : nr_ovfn_count_00, 8192u);
+        for (unsigned i = 0; i < cnt && n < 1800; ++i)
+            if (g_nr_ovstamp[ov][i] == s) g_srnx_codelist[n++] = t[i] | (ov ? 0x80000000u : 0u);
+    }
+    g_srnx_codelist_n = n;
+    int scene = 0;
+    if (i_logos >= 0 && g_nr_ovstamp[1][i_logos] == s) scene = 8;
+    else if (i_title >= 0 && g_nr_ovstamp[1][i_title] == s) scene = 9;
+    else if (i_menu >= 0 && g_nr_ovstamp[1][i_menu] == s) scene = 10;
+    ++g_nr_ovserial;
+    return scene;
+}
+
 namespace {
 inline int ch(uint32_t c, int s) { return (int)((c >> s) & 255); }
 inline bool panel_bg(uint32_t c) {   // white panel and its light grey stripes
@@ -1098,7 +1145,7 @@ bool srnx_special_next_circle(int* x, int* y) {
     return true;
 }
 
-int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_on_top) {
+int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_on_top, int code_scene) {
     static int mode = 0, cand = 0, run = 0;
     // test23 rewrote this function and lost this call: the highlighted
     // circle was never found, so neither button tapped
@@ -1120,15 +1167,24 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
     // switch-test25: never stacked. A screen recognised below gets its own
     // layout; anything else shows the screen the main 2D engine drives
     // (POWCNT1 bit 15) at full height.
-    int want = 0;
-    {
+    // the game's own code decides first; the pixel checks below only cover
+    // screens that have no code signature yet
+    int want = code_scene;
+    if (!want) {
         int n = 0, blue = 0;   // the special stage banner along the top
         for (int y = 8; y < 32; y += 3)
             for (int x = 4; x < 252; x += 4, ++n) { const uint32_t c = top[y * 256 + x]; blue += ch(c, 0) > ch(c, 16) + 40; }
         // (test24: a "bottom less than 30% white" check here dropped the
         // layout on the snowy finish; a cutscene is told apart by its black
         // bottom screen instead)
-        if (white(top) > 0.45f && blue * 2 > n && frac(bottom, 0, 192, 4, is_black) < 0.5f) want = 1;
+        // switch-test27: also the ring count's yellow digits and the progress
+        // rail's navy frame (the Blaze main menu passed the rest: rpl-003)
+        int yel = 0, navy = 0, nn = 0;
+        for (int y = 95; y < 145; ++y)
+            for (int x = 20; x < 236; ++x) { const uint32_t c = top[y * 256 + x]; yel += ch(c, 16) > 200 && ch(c, 8) > 150 && ch(c, 0) < 80; }
+        for (int y = 160; y < 184; ++y)
+            for (int x = 12; x < 246; ++x, ++nn) { const uint32_t c = top[y * 256 + x]; navy += ch(c, 0) > 120 && ch(c, 16) < 60; }
+        if (white(top) > 0.45f && blue * 2 > n && frac(bottom, 0, 192, 4, is_black) < 0.5f && yel > 500 && navy * 10 > nn * 4) want = 1;
     }
     if (!want) {
         // boss: the health panel on the bottom screen (red emblem, grey panel)
@@ -1161,6 +1217,14 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
     auto is_yellow = [](uint32_t c) { return ch(c, 16) > 200 && ch(c, 8) > 150 && ch(c, 0) < 80; };
     auto is_button = [](uint32_t c) { return ch(c, 0) > 200 && ch(c, 16) < 120; };
     if (!want) {
+        // world map (no code signature yet): green map below, the status panel
+        // and the blue strip on top
+        auto is_green = [](uint32_t c) { return ch(c, 8) > ch(c, 16) + 20 && ch(c, 8) > ch(c, 0) + 20; };
+        auto is_blue = [](uint32_t c) { return ch(c, 0) > 200 && ch(c, 16) < 80; };
+        const auto g = count(bottom, 0, 256, 0, 192, is_green), p = count(top, 12, 122, 12, 122, is_light), b = count(top, 0, 256, 150, 180, is_blue);
+        if (g.first * 4 > g.second && p.first * 10 > p.second * 4 && b.first * 100 > b.second * 15) want = 11;
+    }
+    if (!want) {
         const auto press = count(bottom, 45, 205, 80, 91, is_grey);   // the PRESS START bar
         const auto yel = count(top, 0, 256, 30, 110, is_yellow);      // the logo
         if (yel.first > 2000 && press.first * 10 > press.second * 4) want = 9;
@@ -1182,7 +1246,7 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
             mode = want; run = 0;
             static const char* names[] = {"off", "special stage", "boss", "top screen", "bottom screen",
                                           "special stage intro", "emerald result", "both screens shrunk",
-                                          "logos", "title", "main menu"};
+                                          "logos", "title", "main menu", "world map"};
             std::fprintf(stderr, "[srnx] one-screen layout: %s\n", names[mode]);
         }
     } else run = 0;
@@ -1256,6 +1320,13 @@ void srnx_special_compose(int mode, const uint32_t* top, const uint32_t* bottom,
             }
             for (int x = ox + w; x < 424; ++x) o[x] = r;
         }
+        return;
+    }
+    if (mode == 11) {
+        // world map: the map at full height, the status panel shrunk into the
+        // top-left corner
+        put_top_full(bottom, out, pitch);
+        put_box(top, 8, 8, 118, 120, out, pitch, 56, 4, 83, 84);
         return;
     }
     if (mode == 6) {

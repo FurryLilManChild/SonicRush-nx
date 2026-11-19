@@ -141,6 +141,12 @@ void nr_fentry(uint32_t pc);
 #else
 #define NR_FENTRY(pc) ((void)0)
 #endif
+/* SonicRush-nx switch-test27: which overlay functions ran this frame. Each
+   overlay function stores the frame serial in its slot on entry; the port reads
+   the slots once a frame to tell screens apart by the game's own code. */
+extern uint32_t g_nr_ovstamp[2][8192];
+extern uint32_t g_nr_ovserial;
+#define NR_OVSTAMP(ov, i) (g_nr_ovstamp[(ov)][(i)] = g_nr_ovserial)
 #define NR_ENTER() do { if (__builtin_expect((char*)__builtin_frame_address(0) < nr_stack_limit, 0)) nr_stack_overflow(); } while (0)
 
 /* Host debug: NR_CALLTRACE builds log every native function entry

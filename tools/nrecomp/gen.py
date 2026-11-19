@@ -58,6 +58,7 @@ def load_hooks(path):
 
 HOOKS = load_hooks(os.environ.get('NR_HOOKS', ''))
 CURRENT_GROUP = None    # 'static' or 'ovNN', set by gen_all while emitting a group
+CURRENT_FN_INDEX = -1   # SonicRush-nx: the function's index in its overlay (per-frame code stamps)
 
 
 def hook_at(a):
@@ -576,6 +577,9 @@ class FuncGen:
         self.w('    const uint32_t _thumb = %d; (void)_thumb;' % (1 if f.thumb else 0))
         self.w('    NR_ENTER();')
         self.w('    NR_FENTRY(%s);' % h32(f.entry | (1 if f.thumb else 0)))
+        if CURRENT_GROUP and CURRENT_GROUP.startswith('ov') and CURRENT_FN_INDEX >= 0:
+            # which overlay functions ran this frame (screen identification)
+            self.w('    NR_OVSTAMP(%d, %d);' % (int(CURRENT_GROUP[2:]), CURRENT_FN_INDEX))
         self.w('    NR_LOCALS();')
         self.w('    uint32_t _sv, _sc; (void)_sv; (void)_sc;')
         # A call to the function's own entry address is a normal entry.

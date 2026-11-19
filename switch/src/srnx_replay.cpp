@@ -105,6 +105,13 @@ void srnx_replay_record_ds(const uint32_t* top, const uint32_t* bottom) {
     std::memcpy(f.ds.data() + 256 * 192, bottom, 256 * 192 * 4);
     std::memset(f.v3d.data(), 0, f.v3d.size() * 4);
     std::memset(f.spr.data(), 0, kSprBytes);
+    // switch-test27: the overlay functions that ran this frame (u32 count, then
+    // address | 0x80000000 for overlay 1)
+    {
+        const uint32_t n = (uint32_t)std::min<int>(g_srnx_codelist_n, (int)(kSprBytes / 4) - 1);
+        std::memcpy(f.spr.data(), &n, 4);
+        std::memcpy(f.spr.data() + 4, g_srnx_codelist, n * 4);
+    }
     std::memset(f.obj.data(), 0, kSrnxObjVram);
 }
 

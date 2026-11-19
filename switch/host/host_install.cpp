@@ -1,4 +1,5 @@
 #include <chrono>
+int srnx_code_frame();   // srnx_wide_render.cpp (file scope: the hooks below sit in an anonymous namespace)
 // SonicRush-nx host boot test (from MPH-nx): install the native ARM9 engine before upstream
 // main() runs (the Switch build does this from nx_main.cpp).
 //   NR_DISABLE=1        leave it out: the ARM9 runs on upstream's interpreter
@@ -359,6 +360,18 @@ void wide_vblank() {
     }
 }
 void round_hook(uint64_t cyc) {
+    // switch-test27 host check: NR_CODESCENE=1 runs the Switch's per-frame
+    // screen identification once a frame (560190 system cycles = 1120380 ARM9
+    // cycles) and logs each change
+    {
+        static int on = -1; static uint64_t next = 0; static int last = -1;
+        if (on < 0) on = std::getenv("NR_CODESCENE") ? 1 : 0;
+        if (on && cyc >= next) {
+            next = cyc + 1120380ull;
+            const int sc = srnx_code_frame();
+            if (sc != last) { std::fprintf(stderr, "[codescene] %.0fM scene %d\n", cyc / 1e6, sc); last = sc; }
+        }
+    }
     play_hook(cyc);
 
     const NdsSavestateIdentity id{"srnx-host", "bc617530bb9b6e4179f2e54d7816c38676812dde"};
