@@ -3540,7 +3540,7 @@ index 56dbb80..2640c44 100644
  
      if (info.cpu_brand.empty()) info.cpu_brand = "unknown";
 diff --git a/runner/src/io.cpp b/runner/src/io.cpp
-index 20544a0..f2d32e9 100644
+index 20544a0..1ec18f2 100644
 --- a/runner/src/io.cpp
 +++ b/runner/src/io.cpp
 @@ -1,5 +1,6 @@
@@ -4132,10 +4132,23 @@ index 20544a0..f2d32e9 100644
                  if (g_card_transfer_pos < g_card_transfer_len) {
                      const uint32_t xfercycle =
                          (g_romctrl & 0x08000000u) ? 8u : 5u;
-@@ -3399,8 +3691,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3399,8 +3691,36 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
  }
  
  void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
++    {
++        // host diagnostic: NR_IOWATCH=lo-hi logs writes to that I/O range with
++        // the time and scanline (SonicRush-nx world map flicker, 2026-11-19)
++        static int on = -1; static uint32_t lo = 0, hi = 0; static unsigned long long from = 0;
++        if (on < 0) {
++            const char* e = std::getenv("NR_IOWATCH");
++            on = e && std::sscanf(e, "%x-%x", &lo, &hi) == 2;
++            if (const char* f = std::getenv("NR_IOWATCH_FROM")) from = std::strtoull(f, nullptr, 0);
++        }
++        if (on && addr >= lo && addr < hi && g_runtime_cycles >= from)
++            std::fprintf(stderr, "[iowatch] %llu line %u %08X <- %08X (%u bytes)\n",
++                         (unsigned long long)g_runtime_cycles, (unsigned)g_vcount, addr, value, width);
++    }
 +#if defined(__SWITCH__)
 +    { const int fc = nx_io_fence_class(addr); if (fc >= 0) scheduler_performance_io_fence_class(fc); }
 +#else
@@ -4156,7 +4169,7 @@ index 20544a0..f2d32e9 100644
      if (card_register_address(addr) && !card_owned_by(cpu)) return;
      if (cpu == 0 && gpu2d_reg_addr(addr)) {
          nds_gpu2d_write(addr, value, width);
-@@ -3483,6 +3790,7 @@ void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
+@@ -3483,6 +3803,7 @@ void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
              T.ctrl = newctrl;
              if (now_on && !was_on) { T.counter = T.reload; T.accum = 0; }
          }

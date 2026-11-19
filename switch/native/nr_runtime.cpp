@@ -555,6 +555,8 @@ static void nr_irq_exit() {
     runtime_msr_cpsr(spsr, 0xF);
     g_cpu.cpsr = spsr;
     g_cpu.R[15] = (lr - 4u) & ~1u;
+    if (trace_sw()) std::fprintf(stderr, "[sw] irq exit -> %08X cpsr %08X sp %08X cyc %llu\n", g_cpu.R[15], g_cpu.cpsr, g_cpu.R[13],
+                                 (unsigned long long)g_runtime_cycles);
 }
 
 // IRQ entry as the hardware plus the BIOS IRQ vector do it, then the game's
@@ -567,6 +569,8 @@ static void nr_take_irq(uint32_t resume) {
     runtime_msr_cpsr((old & ~0x3Fu) | 0x92u, 0x1);         // IRQ mode, I set, ARM
     g_cpu.cpsr = (g_cpu.cpsr & ~CPSR_T_BIT) | CPSR_I_BIT;
     runtime_msr_spsr(old, 0xF);
+    if (trace_sw()) std::fprintf(stderr, "[sw] irq take at %08X old cpsr %08X sp %08X cyc %llu\n", resume, old, g_cpu.R[13],
+                                 (unsigned long long)g_runtime_cycles);
     g_cpu.R[14] = resume + 4u;
     // BIOS: STMFD sp!, {r0-r3, r12, lr}
     uint32_t sp = g_cpu.R[13] - 24u;
@@ -653,9 +657,15 @@ static void swi_intr_wait(bool discard, uint32_t mask) {
         const uint32_t cpsr = g_cpu.cpsr;
         g_cpu.cpsr &= ~CPSR_I_BIT;
         halt_until_irq();
-        if (nds_irq_pending(0)) nr_take_irq(resume);
+        // halt_until_irq's nr_service may already have taken the interrupt,
+        // and its handler may still be running (nr_redirect, IRQ mode, I set).
+        // Taking it again here, unconditionally, overwrote the saved state of
+        // this wait with the handler's: the game resumed at 0x0200007C in ARM
+        // IRQ mode and froze (zone 2 start, SonicRush-nx switch-test28; host
+        // trace: two "irq take at 0200007C", the second with cpsr 20000092).
+        if (!nr_redirect && !(g_cpu.cpsr & CPSR_I_BIT) && nds_irq_pending(0)) nr_take_irq(resume);
+        if (nr_redirect) return;   // a handler is running: leave its state alone
         g_cpu.cpsr = (g_cpu.cpsr & ~CPSR_I_BIT) | (cpsr & CPSR_I_BIT);
-        if (nr_redirect) return;
     }
 }
 
