@@ -499,7 +499,7 @@ index 022a1af..8c31a75 100644
  #endif
      if (supported) {
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 7d9d4eb..73a1ba6 100644
+index 7d9d4eb..ede4766 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
 @@ -4,6 +4,7 @@
@@ -1675,7 +1675,7 @@ index 7d9d4eb..73a1ba6 100644
  PresentationTicks present_screens(FrontendPresentation& presentation,
                                    const uint32_t* top_pixels,
                                    int top_width,
-@@ -2141,8 +3071,227 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2141,8 +3071,236 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
  #endif
          return ticks;
      }
@@ -1768,6 +1768,9 @@ index 7d9d4eb..73a1ba6 100644
 +            if (have && !was_stage) { nx_present_wide_check(3); g_srnx_act_start = 1; }
 +            if (have) srnx_replay_record(wide_p, shown_d, top_pixels, bottom_pixels);
 +            else if (top_pixels && bottom_pixels) srnx_replay_record_ds(top_pixels, bottom_pixels);
++            // switch-test20: special stages (3D on the bottom screen, ring count on the top)
++            g_srnx_special = !have && g_nx_layout == kNxWide && top_pixels && bottom_pixels &&
++                             srnx_special_detect(top_pixels, bottom_pixels);
 +            if (srnx_cap_pending) {
 +                srnx_cap_pending = false;
 +                // L3 saves the last 2 seconds (srnx_replay.h), in a stage or not
@@ -1778,6 +1781,7 @@ index 7d9d4eb..73a1ba6 100644
 +                f.wide_p = &wide_p;
 +                f.wide_data = shown_d;
 +            }
++            f.srnx_special = g_srnx_special;
 +        }
 +#endif
 +        {
@@ -1897,13 +1901,18 @@ index 7d9d4eb..73a1ba6 100644
 +        g_nx_bottom_rect = draw_bottom
 +            ? SDL_Rect{bottom_rect.x, bottom_rect.y, bottom_rect.w, bottom_rect.h}
 +            : SDL_Rect{0, 0, 0, 0};
++#if defined(SRNX)
++        // special stage: the bottom screen fills the view's middle 320x240
++        // (3x: 960x720 at x 160 on the 1280x720 display); touch maps there
++        if (g_srnx_special) g_nx_bottom_rect = SDL_Rect{160, 0, 960, 720};
++#endif
 +        return ticks;
 +    }
 +#endif
      uint64_t start = SDL_GetPerformanceCounter();
      SDL_UpdateTexture(presentation.textures[0], nullptr, top_pixels,
                        top_width * sizeof(uint32_t));
-@@ -2152,6 +3301,51 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2152,6 +3310,51 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
      if (!presentation.separate) {
          SDL_Renderer* renderer = presentation.renderers[0];
          start = SDL_GetPerformanceCounter();
@@ -1955,7 +1964,7 @@ index 7d9d4eb..73a1ba6 100644
          SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
          SDL_RenderClear(renderer);
          const SDL_Rect top_rect{
-@@ -2169,6 +3363,9 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2169,6 +3372,9 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
                                  virtual_stylus_x, virtual_stylus_y);
          draw_savestate_notice(renderer, bottom_rect, savestate_notice);
          ticks.draw += SDL_GetPerformanceCounter() - start;
@@ -1965,7 +1974,7 @@ index 7d9d4eb..73a1ba6 100644
          start = SDL_GetPerformanceCounter();
          SDL_RenderPresent(renderer);
          ticks.swap += SDL_GetPerformanceCounter() - start;
-@@ -2403,6 +3600,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2403,6 +3609,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      // rate directly; the sub-sample remainder is absorbed by the bounded queue
      // instead of producing a roughly once-per-second underrun at 32768 Hz.
      want.freq = kAudioFrequency;
@@ -1979,7 +1988,7 @@ index 7d9d4eb..73a1ba6 100644
      want.format = AUDIO_S16SYS;
      want.channels = 2;
  #if !defined(NDS_HAVE_SDL3)
-@@ -2446,6 +3650,19 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2446,6 +3659,19 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          options.virtual_stylus.enabled && !mph_prime_controls_available;
      MphPrimeBindingSet mph_prime_bindings{};
      MphPadBindingSet mph_pad_bindings{};
@@ -1999,7 +2008,7 @@ index 7d9d4eb..73a1ba6 100644
      if (mph_prime_controls_available) {
          mph_prime_bindings = make_mph_prime_bindings(options.mph_bindings);
          mph_pad_bindings = make_mph_pad_bindings(options.mph_pad_bindings);
-@@ -2520,7 +3737,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2520,7 +3746,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          nds_set_key_mask(static_cast<uint16_t>(
              0x0FFFu &
              ~(keyboard_pressed | controller_pressed | mouse_pressed |
@@ -2012,7 +2021,7 @@ index 7d9d4eb..73a1ba6 100644
      };
      publish_keys();
      nds_set_touch(0, 0, false);
-@@ -2543,6 +3764,106 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2543,6 +3773,106 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      runtime_menu_config.items = runtime_menu_items;
      runtime_menu_config.item_count =
          sizeof(runtime_menu_items) / sizeof(runtime_menu_items[0]);
@@ -2119,7 +2128,7 @@ index 7d9d4eb..73a1ba6 100644
      runtime_menu_config.callbacks.context = &runtime_menu_state;
      runtime_menu_config.callbacks.get_value = runtime_menu_get_value;
      runtime_menu_config.callbacks.set_value = runtime_menu_set_value;
-@@ -2552,6 +3873,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2552,6 +3882,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      runtime_menu_config.theme = "nds";
      runtime_menu_config.accept_label = "A / Enter";
      runtime_menu_config.back_label = "B / Backspace";
@@ -2130,7 +2139,7 @@ index 7d9d4eb..73a1ba6 100644
      RecompRuntimeUi* runtime_ui =
          recomp_runtime_ui_create(&runtime_menu_config);
      if (!runtime_ui) {
-@@ -2561,6 +3886,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2561,6 +3895,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      bool mouse_down = false;
      bool touch_release_pending = false;
      uint32_t touch_frames_held = 0;
@@ -2145,7 +2154,7 @@ index 7d9d4eb..73a1ba6 100644
      int64_t relative_delta_x = 0;
      int64_t relative_delta_y = 0;
      uint64_t relative_direct_writes = 0;
-@@ -3257,9 +4590,282 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3257,9 +4599,282 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  relative_mouse_selftest_stage = 10;
              }
          }
@@ -2428,7 +2437,7 @@ index 7d9d4eb..73a1ba6 100644
              if (event.type == SDL_QUIT) {
                  release_relative_mouse();
                  running = false;
-@@ -3451,6 +5057,37 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3451,6 +5066,37 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  clear_virtual_stylus();
                  publish_keys();
              }
@@ -2466,7 +2475,7 @@ index 7d9d4eb..73a1ba6 100644
              if (event.type == SDL_CONTROLLERBUTTONDOWN ||
                  event.type == SDL_CONTROLLERBUTTONUP) {
                  RecompRuntimeUiInput menu_input{};
-@@ -3707,10 +5344,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3707,10 +5353,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          if (controller) {
              // Left stick -> D-pad, with hysteresis so a stick resting near
              // a threshold never flickers a direction.
@@ -2483,7 +2492,7 @@ index 7d9d4eb..73a1ba6 100644
              const bool menu_open = runtime_menu_open();
              if (menu_open) {
                  if (stick_pressed != 0) {
-@@ -3764,10 +5405,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3764,10 +5414,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                          publish_keys();
                      }
                  };
@@ -2504,7 +2513,7 @@ index 7d9d4eb..73a1ba6 100644
              }
  
              if (!menu_open && virtual_stylus_available) {
-@@ -3818,7 +5469,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3818,7 +5478,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  }
              }
  
@@ -2517,7 +2526,7 @@ index 7d9d4eb..73a1ba6 100644
                  // Right stick -> camera aim; triggers act as bindable
                  // pseudo-buttons (defaults: RT shoot, LT scan-fire).
                  const float rx = SDL_GameControllerGetAxis(
-@@ -3829,6 +5484,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3829,6 +5493,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                      controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 9830;
                  const bool trigger_left = SDL_GameControllerGetAxis(
                      controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 9830;
@@ -2527,7 +2536,7 @@ index 7d9d4eb..73a1ba6 100644
                  if (trigger_right != mph_pad_trigger_right_held) {
                      mph_pad_trigger_right_held = trigger_right;
                      process_mph_prime_pad(MphPadInputKind::TriggerRight,
-@@ -3920,7 +5578,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3920,7 +5587,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  MphPrimeAction::VirtualStylus)];
          const bool generic_virtual_stylus = virtual_stylus_active();
  
@@ -2540,7 +2549,7 @@ index 7d9d4eb..73a1ba6 100644
          if (turbo_want != turbo_active) {
              turbo_active = turbo_want;
              if (audio) {
-@@ -3937,6 +5599,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3937,6 +5608,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                           turbo_active ? "on" : "off");
          }
  
@@ -2561,7 +2570,7 @@ index 7d9d4eb..73a1ba6 100644
          if ((relative_mouse.captured() || mph_prime_pad_engaged) &&
              options.relative_mouse_direct_aim &&
              !mph_prime_virtual_stylus &&
-@@ -3989,6 +5665,88 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3989,6 +5674,88 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                      nds_set_touch(128, 96, true);
              }
          }
@@ -2650,7 +2659,7 @@ index 7d9d4eb..73a1ba6 100644
          if (options.custom_gamepad_bindings) {
              // Button events handle digital bindings; poll signed axes here.
              // Each row has one source, so clearing an axis row cannot release
-@@ -4186,8 +5944,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -4186,8 +5953,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  presentation, blend_cache.blended[0].data(), top_width,
                  blend_cache.blended[1].data(), bottom_width,
                  runtime_ui,
@@ -2662,7 +2671,7 @@ index 7d9d4eb..73a1ba6 100644
                  savestate_notice.empty() ? nullptr : savestate_notice.c_str());
              if (!synthetic_ticks.ok) {
                  compute_failed = true;
-@@ -4210,14 +5969,18 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -4210,14 +5978,18 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
              presentation, top_pixels, top_width,
              bottom_pixels, bottom_width,
              runtime_ui,
@@ -3458,7 +3467,7 @@ index 56dbb80..2640c44 100644
  
      if (info.cpu_brand.empty()) info.cpu_brand = "unknown";
 diff --git a/runner/src/io.cpp b/runner/src/io.cpp
-index 20544a0..3893bf4 100644
+index 20544a0..8ead082 100644
 --- a/runner/src/io.cpp
 +++ b/runner/src/io.cpp
 @@ -1,5 +1,6 @@
@@ -3626,7 +3635,17 @@ index 20544a0..3893bf4 100644
  bool nds_io_flush_cartridge_save() {
      if (!g_cart_backup.dirty || g_cart_save_path.empty())
          return true;
-@@ -2201,6 +2275,9 @@ uint64_t nds_next_system_event_time() {
+@@ -2048,7 +2122,9 @@ bool nds_io_cartridge_save_snapshot(const uint8_t** data, uint32_t* size,
+     return true;
+ }
+ 
++uint32_t g_srnx_touch_word = 0;   // SonicRush-nx replays: x | y << 8 | down << 16
+ void nds_set_touch(uint16_t x, uint16_t y, bool down) {
++    g_srnx_touch_word = down ? ((x & 0xFFu) | (y & 0xFFu) << 8 | 1u << 16) : 0u;
+     if (!down) {
+         g_tsc_x = 0x000u;
+         g_tsc_y = 0x0FFFu;
+@@ -2201,6 +2277,9 @@ uint64_t nds_next_system_event_time() {
  }
  
  uint64_t nds_next_timer_overflow_time() {
@@ -3636,7 +3655,7 @@ index 20544a0..3893bf4 100644
      // Timers are catch-up-ticked rather than deadline-scheduled, so the idle
      // fast-forward needs their next overflow as an explicit deadline. Only
      // clock-driven timers own a timeline position; a count-up (cascade) timer
-@@ -2218,6 +2295,8 @@ uint64_t nds_next_timer_overflow_time() {
+@@ -2218,6 +2297,8 @@ uint64_t nds_next_timer_overflow_time() {
              best = std::min(best, when);
          }
      }
@@ -3645,7 +3664,7 @@ index 20544a0..3893bf4 100644
      return best;
  }
  
-@@ -2241,6 +2320,34 @@ void nds_timer_debug_state(int cpu, NdsTimerDebugState out[4]) {
+@@ -2241,6 +2322,34 @@ void nds_timer_debug_state(int cpu, NdsTimerDebugState out[4]) {
      }
  }
  
@@ -3680,7 +3699,7 @@ index 20544a0..3893bf4 100644
  uint64_t nds_debug_spi_deadline() { return g_spi_deadline; }
  uint64_t nds_debug_card_deadline() { return g_card_deadline; }
  
-@@ -2263,32 +2370,7 @@ void nds_run_system_events(uint64_t timestamp) {
+@@ -2263,32 +2372,7 @@ void nds_run_system_events(uint64_t timestamp) {
          if (g_spicnt & 0x4000u)
              nds_raise_irq(1, 0x00800000u); // ARM7 IRQ_SPI
      }
@@ -3714,7 +3733,7 @@ index 20544a0..3893bf4 100644
      if (g_div_deadline <= timestamp) {
          g_div_deadline = UINT64_MAX;
          finish_div();
-@@ -2492,10 +2574,20 @@ void nds_tick_rtc(unsigned long long system_cycles) {
+@@ -2492,10 +2576,20 @@ void nds_tick_rtc(unsigned long long system_cycles) {
  }
  
  // ── Interrupt controller ────────────────────────────────────────────────
@@ -3735,7 +3754,7 @@ index 20544a0..3893bf4 100644
  }
  
  void nds_clear_irq(int cpu, uint32_t bits) {
-@@ -2710,6 +2802,8 @@ bool io_savestate_import(const NdsIoCoreSaveState& in, std::string* error) {
+@@ -2710,6 +2804,8 @@ bool io_savestate_import(const NdsIoCoreSaveState& in, std::string* error) {
  
      irq_recompute(0);
      irq_recompute(1);
@@ -3744,7 +3763,7 @@ index 20544a0..3893bf4 100644
      bus_fast_refresh();
      return true;
  }
-@@ -2926,6 +3020,7 @@ uint32_t nds_irq_pending(int cpu) {
+@@ -2926,6 +3022,7 @@ uint32_t nds_irq_pending(int cpu) {
  }
  
  bool nds_cpu_halted(int cpu) { return g_cpu_halted[cpu & 1]; }
@@ -3752,7 +3771,7 @@ index 20544a0..3893bf4 100644
  
  void nds_cpu_enter_halt(int cpu) {
      cpu &= 1;
-@@ -2957,7 +3052,14 @@ bool nds_dma_cpu_stalled(int cpu) { return dma_any_running(cpu & 1); }
+@@ -2957,7 +3054,14 @@ bool nds_dma_cpu_stalled(int cpu) { return dma_any_running(cpu & 1); }
  // GXFIFO ARM9 stall flag (melonDS CPUStop_GXStall). Set/cleared by the
  // vendored GPU3D via the NDS shim; scheduler consumption lands with the
  // geometry engine's Run() wiring (3D Phase 2).
@@ -3768,7 +3787,7 @@ index 20544a0..3893bf4 100644
  bool nds_gxfifo_stalled() { return g_gxfifo_stall; }
  
  unsigned long long nds_dma_entry_cycle(int cpu) {
-@@ -2973,6 +3075,10 @@ void nds_dma_trigger(int cpu, uint32_t start_mode) {
+@@ -2973,6 +3077,10 @@ void nds_dma_trigger(int cpu, uint32_t start_mode) {
      }
  }
  
@@ -3779,7 +3798,7 @@ index 20544a0..3893bf4 100644
  void nds_dma_run(int cpu, unsigned long long target_cycles) {
      cpu &= 1;
      // EXACT, not round-sampled. The scheduler only calls this after
-@@ -3040,6 +3146,41 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
+@@ -3040,6 +3148,41 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
                  if (!request_units || nds_gxfifo_stalled()) break;
                  continue;
              }
@@ -3821,7 +3840,7 @@ index 20544a0..3893bf4 100644
  #endif
              const uint32_t unit = dma_unit_cycles(cpu, d, width);
              g_runtime_cycles += uint64_t{unit} << (cpu == 0 ? 1u : 0u);
-@@ -3067,11 +3208,11 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
+@@ -3067,11 +3210,11 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
                  // The card asserts a distinct DMA request for each 32-bit word.
                  // Suspend this channel without completing or reloading it; the
                  // next data-ready event resumes the pending transaction.
@@ -3835,7 +3854,7 @@ index 20544a0..3893bf4 100644
                  nds_gpu3d_check_fifo_dma();
              }
              continue;
-@@ -3087,7 +3228,7 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
+@@ -3087,7 +3230,7 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
              // or the native/ndsref counters silently drift apart.
              ++g_counts.dma_done;
          }
@@ -3844,7 +3863,7 @@ index 20544a0..3893bf4 100644
          d.in_progress = false;
          brk_check();
      }
-@@ -3232,6 +3373,7 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
+@@ -3232,6 +3375,7 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
              unsigned long long extra = ticks / reload_span;
              T.counter = static_cast<uint16_t>(T.reload + (ticks % reload_span));
              carry = 1 + extra;                                 // overflows this round
@@ -3852,7 +3871,7 @@ index 20544a0..3893bf4 100644
              if (T.ctrl & 0x40u) {
                  g_counts.timer_ovf += carry;
                  nds_raise_irq(cpu, 1u << (3 + t));
-@@ -3240,11 +3382,97 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
+@@ -3240,11 +3384,97 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
      }
  }
  
@@ -3950,7 +3969,7 @@ index 20544a0..3893bf4 100644
      if (cpu == 0 && gpu2d_reg_addr(addr))
          return nds_gpu2d_read(addr, width) & m;
      if (addr >= 0x04000130u && addr < 0x04000134u) {
-@@ -3346,6 +3574,38 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3346,6 +3576,38 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
              return addr == 0x040001A2u ? (auxspi_read_data() & m) : 0u;
          case 0x040001A4: case 0x040001A5:
          case 0x040001A6: case 0x040001A7:
@@ -3989,7 +4008,7 @@ index 20544a0..3893bf4 100644
              return (g_romctrl >> ((addr & 3u) * 8)) & m;
          case 0x04000184: case 0x04000185:  // IPCFIFOCNT
              return (fifocnt_read(cpu) >> ((addr & 1u) * 8)) & m;
-@@ -3366,6 +3626,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3366,6 +3628,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
                  word = card_response_word(g_card_transfer_pos);
                  g_romctrl &= ~0x00800000u;
                  g_card_transfer_pos += 4u;
@@ -4013,7 +4032,7 @@ index 20544a0..3893bf4 100644
                  if (g_card_transfer_pos < g_card_transfer_len) {
                      const uint32_t xfercycle =
                          (g_romctrl & 0x08000000u) ? 8u : 5u;
-@@ -3399,8 +3676,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3399,8 +3678,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
  }
  
  void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
@@ -4037,7 +4056,7 @@ index 20544a0..3893bf4 100644
      if (card_register_address(addr) && !card_owned_by(cpu)) return;
      if (cpu == 0 && gpu2d_reg_addr(addr)) {
          nds_gpu2d_write(addr, value, width);
-@@ -3483,6 +3775,7 @@ void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
+@@ -3483,6 +3777,7 @@ void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
              T.ctrl = newctrl;
              if (now_on && !was_on) { T.counter = T.reload; T.accum = 0; }
          }

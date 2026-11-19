@@ -67,6 +67,13 @@ void srnx_wide_inactive();
 void srnx_wide_refresh_obj(const SrnxWideParams& p, uint8_t* data);
 extern int g_srnx_obj_late;
 extern int g_srnx_act_start, g_srnx_card_bottom;
+// switch-test20: special stages. Detected from the two DS screens (the ring
+// panel on the top screen, 3D track on the bottom), with hysteresis; drawn as
+// the bottom screen at full height plus the ring count (left) and the
+// progress bar (right, upright) in the side bars. 424x240.
+extern int g_srnx_special;
+bool srnx_special_detect(const uint32_t* top, const uint32_t* bottom);
+void srnx_special_compose(const uint32_t* top, const uint32_t* bottom, uint32_t* out, int pitch);
 extern int g_srnx_autocap;
 extern unsigned g_srnx_cam_swaps;
 // End of frame, emulation thread: update the camera and fill params + data

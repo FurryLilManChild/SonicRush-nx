@@ -1005,3 +1005,128 @@ void srnx_wide_draw_cpu(const SrnxWideParams& p, const uint8_t* data, uint32_t* 
         }
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// switch-test20: special stages
+int g_srnx_special = 0;
+
+namespace {
+inline int ch(uint32_t c, int s) { return (int)((c >> s) & 255); }
+inline bool panel_bg(uint32_t c) {   // white panel and its light grey stripes
+    const int r = ch(c, 16), g = ch(c, 8), b = ch(c, 0);
+    const int mn = std::min(r, std::min(g, b)), mx = std::max(r, std::max(g, b));
+    return mn > 150 && mx - mn < 40;
+}
+inline uint32_t mix(uint32_t a, uint32_t b, int w) {   // w/256 of b over a
+    auto m = [&](int s) { return (uint32_t)((ch(a, s) * (256 - w) + ch(b, s) * w) >> 8) << s; };
+    return 0xFF000000u | m(16) | m(8) | m(0);
+}
+// Scales the source box (keyed: panel background left out) to dw x dh at (dx, dy).
+void put_keyed(const uint32_t* top, int sx, int sy, int sw, int sh, uint32_t* out, int pitch, int dx, int dy, int dw, int dh) {
+    for (int y = 0; y < dh; ++y)
+        for (int x = 0; x < dw; ++x) {
+            // box filter over the source pixels this output pixel covers
+            const int x0 = sx + x * sw / dw, x1 = std::max(x0 + 1, sx + (x + 1) * sw / dw);
+            const int y0 = sy + y * sh / dh, y1 = std::max(y0 + 1, sy + (y + 1) * sh / dh);
+            int r = 0, g = 0, b = 0, n = 0, all = 0;
+            for (int yy = y0; yy < y1; ++yy)
+                for (int xx = x0; xx < x1; ++xx) {
+                    const uint32_t c = top[yy * 256 + xx];
+                    ++all;
+                    if (panel_bg(c)) continue;
+                    r += ch(c, 16); g += ch(c, 8); b += ch(c, 0); ++n;
+                }
+            if (!n) continue;
+            const uint32_t c = 0xFF000000u | (uint32_t)(r / n) << 16 | (uint32_t)(g / n) << 8 | (uint32_t)(b / n);
+            uint32_t& o = out[(size_t)(dy + y) * pitch + dx + x];
+            o = mix(o, c, n * 256 / all);
+        }
+}
+}
+
+bool srnx_special_detect(const uint32_t* top, const uint32_t* bottom) {
+    static bool on = false;
+    static int run = 0;
+    auto white = [](const uint32_t* s) {
+        int n = 0, w = 0;
+        for (int y = 60; y < 150; y += 3)
+            for (int x = 20; x < 236; x += 3, ++n) w += panel_bg(s[y * 256 + x]);
+        return (float)w / n;
+    };
+    int n = 0, blue = 0;   // the banner along the top
+    for (int y = 8; y < 32; y += 3)
+        for (int x = 4; x < 252; x += 4, ++n) { const uint32_t c = top[y * 256 + x]; blue += ch(c, 0) > ch(c, 16) + 40; }
+    const bool want = white(top) > 0.45f && white(bottom) < 0.3f && blue * 2 > n;
+    if (want != on) {
+        if (++run >= 6) {
+            on = want; run = 0;
+            std::fprintf(stderr, "[srnx] special stage layout %s\n", on ? "on" : "off");
+        }
+    } else run = 0;
+    return on;
+}
+
+void srnx_special_compose(const uint32_t* top, const uint32_t* bottom, uint32_t* out, int pitch) {
+    for (int y = 0; y < 240; ++y)
+        for (int x = 0; x < 424; ++x) out[(size_t)y * pitch + x] = 0xFF000000u;
+    // the track: bottom screen 256x192 to 320x240 at x 52 (bilinear)
+    for (int y = 0; y < 240; ++y) {
+        const int fy = y * 192 * 256 / 240, y0 = fy >> 8, y1 = std::min(y0 + 1, 191), wy = fy & 255;
+        for (int x = 0; x < 320; ++x) {
+            const int fx = x * 256 * 256 / 320, x0 = fx >> 8, x1 = std::min(x0 + 1, 255), wx = fx & 255;
+            const uint32_t a = mix(bottom[y0 * 256 + x0], bottom[y0 * 256 + x1], wx);
+            const uint32_t b = mix(bottom[y1 * 256 + x0], bottom[y1 * 256 + x1], wx);
+            out[(size_t)y * pitch + 52 + x] = mix(a, b, wy);
+        }
+    }
+    // left bar: ring icon, the count, a line, the goal (top screen, keyed)
+    put_keyed(top, 26, 101, 32, 34, out, pitch, 10, 40, 32, 34);
+    put_keyed(top, 60, 99, 68, 32, out, pitch, 1, 82, 50, 24);
+    for (int y = 110; y < 112; ++y)
+        for (int x = 8; x < 44; ++x) out[(size_t)y * pitch + x] = 0xFFF8D800u;
+    put_keyed(top, 150, 108, 66, 34, out, pitch, 1, 116, 50, 26);
+    // right bar: the progress bar turned upright, start at the bottom. The
+    // Sonic icon is found by its own colours, taken out of the rail and put
+    // back upright at its place.
+    auto icon_px = [](uint32_t c) {
+        c &= 0xFFFFFFu;
+        return c == 0x00008Au || c == 0x0059FBu || c == 0xAAAAAAu;
+    };
+    int ix0 = 256, ix1 = -1;
+    for (int y = 160; y < 184; ++y)
+        for (int x = 0; x < 256; ++x)
+            if (icon_px(top[y * 256 + x])) { ix0 = std::min(ix0, x); ix1 = std::max(ix1, x); }
+    const bool icon = ix1 >= ix0 && ix1 - ix0 < 24;
+    auto rail = [&](int x, int y) {
+        const uint32_t c = top[y * 256 + x];
+        if (icon && x >= ix0 - 1 && x <= ix1 + 1) {
+            const bool circle = x < 35 || (x > 117 && x < 138) || x > 221;
+            if (!circle || icon_px(c)) return top[y * 256 + 90];   // the plain rail at this row
+        }
+        return c;
+    };
+    const int bx0 = 12, bx1 = 246, by0 = 157, by1 = 185;   // the bar on the top screen
+    const int len = 204, wid = 24, ox = 386, oy = 18;      // upright in the right bar
+    for (int dy = 0; dy < len; ++dy) {
+        const int sx = bx1 - 1 - dy * (bx1 - bx0) / len;
+        for (int dx = 0; dx < wid; ++dx) {
+            const int sy = by0 + dx * (by1 - by0) / wid;
+            out[(size_t)(oy + dy) * pitch + ox + dx] = rail(sx, sy) | 0xFF000000u;
+        }
+    }
+    if (icon) {
+        const int cx = (ix0 + ix1) / 2;
+        const int py = oy + (bx1 - 1 - cx) * len / (bx1 - bx0);
+        for (int y = 163; y < 181; ++y)
+            for (int x = ix0 - 2; x <= ix1 + 2; ++x) {
+                if (x < 0 || x > 255) continue;
+                const uint32_t c = top[y * 256 + x];
+                if ((c & 0xFFFFFFu) == (top[y * 256 + 90] & 0xFFFFFFu)) continue;   // rail behind the icon
+                const bool circle = x < 35 || (x > 117 && x < 138) || x > 221;
+                if (circle && !icon_px(c)) continue;
+                const int oxp = ox + wid / 2 + (x - cx), oyp = py + (y - 172);
+                if (oyp >= 0 && oyp < 240 && oxp >= 372 && oxp < 424) out[(size_t)oyp * pitch + oxp] = c | 0xFF000000u;
+            }
+    }
+}

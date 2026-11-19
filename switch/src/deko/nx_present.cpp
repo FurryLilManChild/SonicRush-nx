@@ -595,6 +595,29 @@ void present_now(const NxPresentFrame& f)
         g_stat_wide++;
         return;
     }
+    if (f.srnx_special && f.top && f.bottom && g_wide_ok) {
+        // switch-test20: special stage, one 424x240 view drawn on the CPU
+        const int vw = 424, vh = 240;
+        srnx_special_compose(f.top, f.bottom, g_wide_cpu[slot], kWideMaxW);
+        g_cmd.clear();
+        g_cmd.addMemory(g_cmd_mem, slot * kCmdSlotSize, kCmdSlotSize);
+        dk::ImageView fb_view{g_fb[slot]};
+        dk::ImageView wide_view{g_wide[slot]};
+        dk::ImageView black_view{g_black};
+        g_cmd.blitImage(black_view, {0, 0, 0, 16, 16, 1}, fb_view, {0, 0, 0, kFbW, kFbH, 1}, DkBlitFlag_FilterNearest);
+        const double sc = std::min((double)kFbW / vw, (double)kFbH / vh);
+        const bool whole = std::fabs(sc - std::floor(sc + 1e-6)) < 1e-6;
+        const uint32_t dw = (uint32_t)std::lround(vw * sc), dh = (uint32_t)std::lround(vh * sc);
+        g_cmd.blitImage(wide_view, {0, 0, 0, (uint32_t)vw, (uint32_t)vh, 1}, fb_view,
+                        {(kFbW - dw) / 2, (kFbH - dh) / 2, 0, dw, dh, 1},
+                        whole ? DkBlitFlag_FilterNearest : DkBlitFlag_FilterLinear);
+        g_cmd.signalFence(g_fence[slot]);
+        g_fence_used[slot] = true;
+        g_queue.submitCommands(g_cmd.finishList());
+        g_queue.presentImage(g_swapchain, slot);
+        g_stat_wide++;
+        return;
+    }
     uint32_t* top = g_src_cpu[slot][0];
     uint32_t* bottom = g_src_cpu[slot][1];
     uint32_t* hud = g_src_cpu[slot][2];

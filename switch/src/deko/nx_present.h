@@ -46,6 +46,7 @@ struct NxPresentFrame
     // is drawn on the GPU and fills the screen instead of the DS screens.
     const struct SrnxWideParams* wide_p;
     const uint8_t* wide_data;
+    bool srnx_special;          // switch-test20: special stage layout (srnx_special_compose)
 };
 
 struct NxPresentTicks { uint64_t upload, draw, swap; };
