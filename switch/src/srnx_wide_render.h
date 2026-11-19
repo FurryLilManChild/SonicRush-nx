@@ -73,9 +73,12 @@ extern int g_srnx_act_start, g_srnx_card_bottom;
 // progress bar (right, upright) in the side bars. 424x240.
 // switch-test23: g_srnx_special is the one-screen mode outside stages:
 // 0 none, 1 special stage, 2 boss fight (top screen, health gauge upright in
-// the right bar), 3 top screen only (cutscenes: the bottom is black).
+// the right bar), 3 top screen, 4 bottom screen, 5 special stage intro
+// (bottom screen), 6 emerald result (bottom screen, banner, emerald ring).
+// switch-test25: never stacked; an unrecognised screen is 3 or 4 by which
+// screen the main 2D engine drives.
 extern int g_srnx_special;
-int srnx_special_detect(const uint32_t* top, const uint32_t* bottom);
+int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_on_top);
 // switch-test22: the numbered circle the game highlights next during a
 // special-stage jump (its 0x0871FB fill), in DS bottom-screen pixels. Kept for
 // 30 frames through the highlight's blink. False when there is none.

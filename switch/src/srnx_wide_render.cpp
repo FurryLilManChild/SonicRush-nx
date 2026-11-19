@@ -1098,7 +1098,7 @@ bool srnx_special_next_circle(int* x, int* y) {
     return true;
 }
 
-int srnx_special_detect(const uint32_t* top, const uint32_t* bottom) {
+int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_on_top) {
     static int mode = 0, cand = 0, run = 0;
     // test23 rewrote this function and lost this call: the highlighted
     // circle was never found, so neither button tapped
@@ -1109,23 +1109,26 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom) {
             for (int x = 20; x < 236; x += 3, ++n) w += panel_bg(s[y * 256 + x]);
         return (float)w / n;
     };
-    auto black = [](const uint32_t* s) {
-        int n = 0, b = 0;
-        for (int y = 0; y < 192; y += 4)
-            for (int x = 0; x < 256; x += 4, ++n) {
-                const uint32_t c = s[y * 256 + x];
-                b += std::max(ch(c, 16), std::max(ch(c, 8), ch(c, 0))) < 24;
-            }
-        return (float)b / n;
+    auto frac = [](const uint32_t* s, int y0, int y1, int step, bool (*f)(uint32_t)) {
+        int n = 0, k = 0;
+        for (int y = y0; y < y1; y += step)
+            for (int x = 0; x < 256; x += 2, ++n) k += f(s[y * 256 + x]);
+        return (float)k / n;
     };
+    auto is_black = [](uint32_t c) { return std::max(ch(c, 16), std::max(ch(c, 8), ch(c, 0))) < 40; };
+    auto is_light = [](uint32_t c) { return std::min(ch(c, 16), std::min(ch(c, 8), ch(c, 0))) > 190; };
+    // switch-test25: never stacked. A screen recognised below gets its own
+    // layout; anything else shows the screen the main 2D engine drives
+    // (POWCNT1 bit 15) at full height.
     int want = 0;
     {
         int n = 0, blue = 0;   // the special stage banner along the top
         for (int y = 8; y < 32; y += 3)
             for (int x = 4; x < 252; x += 4, ++n) { const uint32_t c = top[y * 256 + x]; blue += ch(c, 0) > ch(c, 16) + 40; }
-        // (a cutscene's white dialog box on dark blue also passed this until
-        // the bottom screen had to be lit: it is black in cutscenes)
-        if (white(top) > 0.45f && white(bottom) < 0.3f && blue * 2 > n && black(bottom) < 0.5f) want = 1;
+        // (test24: a "bottom less than 30% white" check here dropped the
+        // layout on the snowy finish; a cutscene is told apart by its black
+        // bottom screen instead)
+        if (white(top) > 0.45f && blue * 2 > n && frac(bottom, 0, 192, 4, is_black) < 0.5f) want = 1;
     }
     if (!want) {
         // boss: the health panel on the bottom screen (red emblem, grey panel)
@@ -1136,12 +1139,21 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom) {
             for (int x = 14; x < 120; ++x) grey += (bottom[y * 256 + x] & 0xFFFFFFu) == 0x516961u;
         if (red >= 150 && grey >= 100) want = 2;
     }
-    if (!want && black(bottom) > 0.85f && black(top) < 0.6f) want = 3;
+    // emerald result: the black banner along the top screen, light below it
+    if (!want && frac(top, 20, 36, 2, is_black) > 0.5f && frac(top, 50, 180, 4, is_light) > 0.8f) want = 6;
+    // special stage intro: the black hint strip on the bottom screen, light around it
+    if (!want && frac(bottom, 20, 27, 1, is_black) > 0.85f && frac(bottom, 0, 192, 4, is_light) > 0.4f &&
+        frac(top, 50, 180, 4, is_light) > 0.4f) want = 5;
+    // a black bottom screen under a lit top (the pre-boss cutscene: the main
+    // engine drives the black bottom there, the story is on top)
+    if (!want && frac(bottom, 0, 192, 4, is_black) > 0.85f && frac(top, 0, 192, 4, is_black) < 0.6f) want = 3;
+    if (!want) want = main_on_top ? 3 : 4;
     if (want != mode) {
         if (want != cand) { cand = want; run = 0; }
-        if (++run >= 6) {
+        if (++run >= 6 || mode == 0) {
             mode = want; run = 0;
-            static const char* names[] = {"off", "special stage", "boss", "top screen only"};
+            static const char* names[] = {"off", "special stage", "boss", "top screen", "bottom screen",
+                                          "special stage intro", "emerald result"};
             std::fprintf(stderr, "[srnx] one-screen layout: %s\n", names[mode]);
         }
     } else run = 0;
@@ -1149,6 +1161,17 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom) {
 }
 
 namespace {
+void put_box(const uint32_t* src, int sx, int sy, int sw, int sh, uint32_t* out, int pitch, int dx, int dy, int dw, int dh) {
+    for (int y = 0; y < dh; ++y)
+        for (int x = 0; x < dw; ++x) {
+            const int x0 = sx + x * sw / dw, x1 = std::max(x0 + 1, sx + (x + 1) * sw / dw);
+            const int y0 = sy + y * sh / dh, y1 = std::max(y0 + 1, sy + (y + 1) * sh / dh);
+            int r = 0, g = 0, b = 0, n = 0;
+            for (int yy = y0; yy < y1; ++yy)
+                for (int xx = x0; xx < x1; ++xx) { const uint32_t c = src[yy * 256 + xx]; r += ch(c, 16); g += ch(c, 8); b += ch(c, 0); ++n; }
+            out[(size_t)(dy + y) * pitch + dx + x] = 0xFF000000u | (uint32_t)(r / n) << 16 | (uint32_t)(g / n) << 8 | (uint32_t)(b / n);
+        }
+}
 void put_top_full(const uint32_t* src, uint32_t* out, int pitch) {
     for (int y = 0; y < 240; ++y)
         for (int x = 0; x < 424; ++x) out[(size_t)y * pitch + x] = 0xFF000000u;
@@ -1166,6 +1189,16 @@ void put_top_full(const uint32_t* src, uint32_t* out, int pitch) {
 
 void srnx_special_compose(int mode, const uint32_t* top, const uint32_t* bottom, uint32_t* out, int pitch) {
     if (mode == 3) { put_top_full(top, out, pitch); return; }
+    if (mode == 4 || mode == 5) { put_top_full(bottom, out, pitch); return; }   // the bottom screen, same scaling
+    if (mode == 6) {
+        // emerald result: the bottom screen, the banner across the top, the
+        // emerald ring in the left bar
+        put_top_full(bottom, out, pitch);
+        for (int y = 0; y < 27; ++y)
+            for (int x = 0; x < 320; ++x) out[(size_t)y * pitch + 52 + x] = top[(18 + y * 22 / 27) * 256 + x * 256 / 320] | 0xFF000000u;
+        put_box(top, 50, 50, 156, 130, out, pitch, 0, 60, 52, 44);
+        return;
+    }
     if (mode == 2) {
         // boss: the top screen, the skull and the health bars upright in the
         // right bar (bars rotated so the full end is at the bottom)
