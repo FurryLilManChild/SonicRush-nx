@@ -1100,6 +1100,9 @@ bool srnx_special_next_circle(int* x, int* y) {
 
 int srnx_special_detect(const uint32_t* top, const uint32_t* bottom) {
     static int mode = 0, cand = 0, run = 0;
+    // test23 rewrote this function and lost this call: the highlighted
+    // circle was never found, so neither button tapped
+    find_circle(bottom);
     auto white = [](const uint32_t* s) {
         int n = 0, w = 0;
         for (int y = 60; y < 150; y += 3)
