@@ -499,7 +499,7 @@ index 022a1af..8c31a75 100644
  #endif
      if (supported) {
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 7d9d4eb..6a005f5 100644
+index 7d9d4eb..9d636c6 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
 @@ -4,6 +4,7 @@
@@ -843,6 +843,21 @@ index 7d9d4eb..6a005f5 100644
 -                    queue_error = true;
 -                    return audio_queue_count(device, queue);
 -                }
+-            }
+-#else
+-            SDL_LockAudioDevice(device);
+-            if (kAudioCapacityFrames - queue.count >= frames) {
+-                const uint32_t first = std::min(
+-                    frames, kAudioCapacityFrames - queue.write);
+-                std::memcpy(queue.samples.data() + queue.write * 2u,
+-                            samples.data(), first * kAudioFrameBytes);
+-                if (first < frames)
+-                    std::memcpy(queue.samples.data(),
+-                                samples.data() + first * 2u,
+-                                (frames - first) * kAudioFrameBytes);
+-                queue.write = (queue.write + frames) % kAudioCapacityFrames;
+-                queue.count += frames;
+-                pushed = true;
 +#if defined(__SWITCH__) && defined(MPHNX_DEKO3D) && !defined(NDS_HAVE_SDL3)
 +        if (drc && frames > 1) {
 +            s_drc_acc += frames * drc_ratio;
@@ -858,21 +873,6 @@ index 7d9d4eb..6a005f5 100644
 +                    stretched[i * 2 + c] = static_cast<int16_t>(
 +                        samples[j * 2 + c] + (samples[k * 2 + c] - samples[j * 2 + c]) * t);
              }
--#else
--            SDL_LockAudioDevice(device);
--            if (kAudioCapacityFrames - queue.count >= frames) {
--                const uint32_t first = std::min(
--                    frames, kAudioCapacityFrames - queue.write);
--                std::memcpy(queue.samples.data() + queue.write * 2u,
--                            samples.data(), first * kAudioFrameBytes);
--                if (first < frames)
--                    std::memcpy(queue.samples.data(),
--                                samples.data() + first * 2u,
--                                (frames - first) * kAudioFrameBytes);
--                queue.write = (queue.write + frames) % kAudioCapacityFrames;
--                queue.count += frames;
--                pushed = true;
--            }
 -            SDL_UnlockAudioDevice(device);
 +            std::copy_n(stretched.data(), out * 2u, samples.data());
 +            frames = out;
@@ -2475,7 +2475,7 @@ index 7d9d4eb..6a005f5 100644
              if (event.type == SDL_CONTROLLERBUTTONDOWN ||
                  event.type == SDL_CONTROLLERBUTTONUP) {
                  RecompRuntimeUiInput menu_input{};
-@@ -3707,10 +5353,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3707,10 +5353,51 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          if (controller) {
              // Left stick -> D-pad, with hysteresis so a stick resting near
              // a threshold never flickers a direction.
@@ -2489,10 +2489,47 @@ index 7d9d4eb..6a005f5 100644
 +            // native13: the left stick moves the menu highlight instead.
 +            if ((nx_menunav_owns_pad() || nx_menunav_weapon_arc()) && !runtime_menu_open() && !nx_cursor_active) lx = ly = 0.0f;
 +#endif
++#if defined(SRNX)
++            // switch-test22: special stages without touch. The left stick
++            // steers (a held touch on the lower track, slid left and right
++            // with the stick; it lifts when the stick is let go), and A taps
++            // the numbered circle the game highlights next during a jump.
++            {
++                static bool stick_touch = false, a_was = false;
++                static int tap = 0, tap_x = 0, tap_y = 0;
++                const bool a = !runtime_menu_open() &&
++                    SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A);
++                const bool a_edge = a && !a_was;
++                a_was = a;
++                if (g_srnx_special && !runtime_menu_open()) {
++                    int cx = 0, cy = 0;
++                    const bool circle = srnx_special_next_circle(&cx, &cy);
++                    if (a_edge && circle && tap == 0) { tap = 10; tap_x = cx; tap_y = cy; }
++                    if (tap > 0) {
++                        // 8 frames down, 2 up, like a stylus tap
++                        if (tap > 2) nds_set_touch((uint16_t)tap_x, (uint16_t)tap_y, true);
++                        else nds_set_touch(0, 0, false);
++                        --tap;
++                        stick_touch = false;
++                    } else if (!circle && std::fabs(lx) > 0.2f) {
++                        const float v = std::max(-1.0f, std::min(1.0f, lx));
++                        nds_set_touch((uint16_t)(128 + (int)(v * 100.0f)), 140, true);
++                        stick_touch = true;
++                    } else if (stick_touch) {
++                        nds_set_touch(0, 0, false);
++                        stick_touch = false;
++                    }
++                    lx = ly = 0.0f;   // the stick is the steering, not the D-pad
++                } else if (stick_touch || tap) {
++                    nds_set_touch(0, 0, false);
++                    stick_touch = false; tap = 0;
++                }
++            }
++#endif
              const bool menu_open = runtime_menu_open();
              if (menu_open) {
                  if (stick_pressed != 0) {
-@@ -3764,10 +5414,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3764,10 +5451,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                          publish_keys();
                      }
                  };
@@ -2513,7 +2550,7 @@ index 7d9d4eb..6a005f5 100644
              }
  
              if (!menu_open && virtual_stylus_available) {
-@@ -3818,7 +5478,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3818,7 +5515,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  }
              }
  
@@ -2526,7 +2563,7 @@ index 7d9d4eb..6a005f5 100644
                  // Right stick -> camera aim; triggers act as bindable
                  // pseudo-buttons (defaults: RT shoot, LT scan-fire).
                  const float rx = SDL_GameControllerGetAxis(
-@@ -3829,6 +5493,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3829,6 +5530,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                      controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 9830;
                  const bool trigger_left = SDL_GameControllerGetAxis(
                      controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 9830;
@@ -2536,7 +2573,7 @@ index 7d9d4eb..6a005f5 100644
                  if (trigger_right != mph_pad_trigger_right_held) {
                      mph_pad_trigger_right_held = trigger_right;
                      process_mph_prime_pad(MphPadInputKind::TriggerRight,
-@@ -3920,7 +5587,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3920,7 +5624,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  MphPrimeAction::VirtualStylus)];
          const bool generic_virtual_stylus = virtual_stylus_active();
  
@@ -2549,7 +2586,7 @@ index 7d9d4eb..6a005f5 100644
          if (turbo_want != turbo_active) {
              turbo_active = turbo_want;
              if (audio) {
-@@ -3937,6 +5608,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3937,6 +5645,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                           turbo_active ? "on" : "off");
          }
  
@@ -2570,7 +2607,7 @@ index 7d9d4eb..6a005f5 100644
          if ((relative_mouse.captured() || mph_prime_pad_engaged) &&
              options.relative_mouse_direct_aim &&
              !mph_prime_virtual_stylus &&
-@@ -3989,6 +5674,88 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3989,6 +5711,88 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                      nds_set_touch(128, 96, true);
              }
          }
@@ -2659,7 +2696,7 @@ index 7d9d4eb..6a005f5 100644
          if (options.custom_gamepad_bindings) {
              // Button events handle digital bindings; poll signed axes here.
              // Each row has one source, so clearing an axis row cannot release
-@@ -4186,8 +5953,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -4186,8 +5990,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  presentation, blend_cache.blended[0].data(), top_width,
                  blend_cache.blended[1].data(), bottom_width,
                  runtime_ui,
@@ -2671,7 +2708,7 @@ index 7d9d4eb..6a005f5 100644
                  savestate_notice.empty() ? nullptr : savestate_notice.c_str());
              if (!synthetic_ticks.ok) {
                  compute_failed = true;
-@@ -4210,14 +5978,18 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -4210,14 +6015,18 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
              presentation, top_pixels, top_width,
              bottom_pixels, bottom_width,
              runtime_ui,
@@ -3467,7 +3504,7 @@ index 56dbb80..2640c44 100644
  
      if (info.cpu_brand.empty()) info.cpu_brand = "unknown";
 diff --git a/runner/src/io.cpp b/runner/src/io.cpp
-index 20544a0..8ead082 100644
+index 20544a0..f2d32e9 100644
 --- a/runner/src/io.cpp
 +++ b/runner/src/io.cpp
 @@ -1,5 +1,6 @@
@@ -3863,7 +3900,17 @@ index 20544a0..8ead082 100644
          d.in_progress = false;
          brk_check();
      }
-@@ -3232,6 +3375,7 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
+@@ -3123,6 +3266,9 @@ void nds_tick_display(unsigned long long cyc) {
+     for (unsigned long long i = previous_hblank; i < current_hblank; ++i) {
+         const int line = static_cast<int>(i % LINES);
+         if (line < 192) nds_gpu2d_render_scanline(line);
++        // HBlank IRQ (DISPSTAT bit 4), every line: it was never raised.
++        for (int c = 0; c < 2; ++c)
++            if (g_dispstat[c] & 0x0010u) nds_raise_irq(c, 0x00000002u);
+     }
+ 
+     const unsigned long long previous_scanline = g_display_last / SCAN;
+@@ -3232,6 +3378,7 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
              unsigned long long extra = ticks / reload_span;
              T.counter = static_cast<uint16_t>(T.reload + (ticks % reload_span));
              carry = 1 + extra;                                 // overflows this round
@@ -3871,7 +3918,7 @@ index 20544a0..8ead082 100644
              if (T.ctrl & 0x40u) {
                  g_counts.timer_ovf += carry;
                  nds_raise_irq(cpu, 1u << (3 + t));
-@@ -3240,11 +3384,97 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
+@@ -3240,11 +3387,97 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
      }
  }
  
@@ -3969,7 +4016,24 @@ index 20544a0..8ead082 100644
      if (cpu == 0 && gpu2d_reg_addr(addr))
          return nds_gpu2d_read(addr, width) & m;
      if (addr >= 0x04000130u && addr < 0x04000134u) {
-@@ -3346,6 +3576,38 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3307,6 +3540,16 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+             uint16_t v = g_dispstat[cpu] & 0xFFB8u;        // enable + LYC bits
+             if (g_in_vblank) v |= 0x0001u;                  // VBlank flag
+             if (g_vcount_match[cpu]) v |= 0x0004u;          // latched at line start
++            {
++                // HBlank flag (bit 1), from the reading CPU's live time: set
++                // from dot 268 (cycle 1584 of 2130) to the end of every line,
++                // VBlank lines included (GBATEK). It was never set: Sonic
++                // Rush's boss cutscene waits on it before each palette write
++                // and hung forever (SonicRush-nx switch-test21 log).
++                unsigned long long now = cpu == 0 ? (g_runtime_cycles >> 1) : g_runtime_cycles;
++                if (now < g_display_last) now = g_display_last;
++                if (now % 2130ull >= 1584ull) v |= 0x0002u;
++            }
+             if (addr == 0x04000004u && width == 4u)
+                 return uint32_t{v} | (uint32_t{g_vcount} << 16u);
+             return (v >> ((addr & 1u) * 8)) & m;
+@@ -3346,6 +3589,38 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
              return addr == 0x040001A2u ? (auxspi_read_data() & m) : 0u;
          case 0x040001A4: case 0x040001A5:
          case 0x040001A6: case 0x040001A7:
@@ -4008,7 +4072,7 @@ index 20544a0..8ead082 100644
              return (g_romctrl >> ((addr & 3u) * 8)) & m;
          case 0x04000184: case 0x04000185:  // IPCFIFOCNT
              return (fifocnt_read(cpu) >> ((addr & 1u) * 8)) & m;
-@@ -3366,6 +3628,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3366,6 +3641,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
                  word = card_response_word(g_card_transfer_pos);
                  g_romctrl &= ~0x00800000u;
                  g_card_transfer_pos += 4u;
@@ -4032,7 +4096,7 @@ index 20544a0..8ead082 100644
                  if (g_card_transfer_pos < g_card_transfer_len) {
                      const uint32_t xfercycle =
                          (g_romctrl & 0x08000000u) ? 8u : 5u;
-@@ -3399,8 +3678,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3399,8 +3691,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
  }
  
  void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
@@ -4056,7 +4120,7 @@ index 20544a0..8ead082 100644
      if (card_register_address(addr) && !card_owned_by(cpu)) return;
      if (cpu == 0 && gpu2d_reg_addr(addr)) {
          nds_gpu2d_write(addr, value, width);
-@@ -3483,6 +3777,7 @@ void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
+@@ -3483,6 +3790,7 @@ void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
              T.ctrl = newctrl;
              if (now_on && !was_on) { T.counter = T.reload; T.accum = 0; }
          }

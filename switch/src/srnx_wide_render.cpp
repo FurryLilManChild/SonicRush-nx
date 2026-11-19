@@ -1045,9 +1045,63 @@ void put_keyed(const uint32_t* top, int sx, int sy, int sw, int sh, uint32_t* ou
 }
 }
 
+namespace {
+int g_circle_x = 0, g_circle_y = 0, g_circle_age = 1000;
+void find_circle(const uint32_t* bottom) {
+    // the highlighted circle's fill colour; two circles can show it for a
+    // frame or two while the highlight moves: take the larger group
+    static int xs[256 * 192 / 4], ys[256 * 192 / 4];
+    int n = 0;
+    for (int y = 0; y < 192; y += 2)
+        for (int x = 0; x < 256; x += 2)
+            if ((bottom[y * 256 + x] & 0xFFFFFFu) == 0x0871FBu) { xs[n] = x; ys[n] = y; ++n; }
+    ++g_circle_age;
+    if (n < 6) return;
+    int x0 = 256, x1 = -1;
+    for (int i = 0; i < n; ++i) { x0 = std::min(x0, xs[i]); x1 = std::max(x1, xs[i]); }
+    int lo = x0, hi = x1;
+    if (x1 - x0 > 40) {   // two groups: split at the middle, keep the fuller side
+        const int mid = (x0 + x1) / 2;
+        int a = 0;
+        for (int i = 0; i < n; ++i) a += xs[i] < mid;
+        if (a * 2 >= n) hi = mid; else lo = mid;
+    }
+    // the fill can cover only the lower part of the disc (rpl-001: circle 3
+    // filled rows 135-144): centre across on the fill, up and down on the
+    // whole disc
+    int bx0 = 256, bx1 = -1, by1 = -1, k = 0;
+    for (int i = 0; i < n; ++i)
+        if (xs[i] >= lo && xs[i] <= hi) { bx0 = std::min(bx0, xs[i]); bx1 = std::max(bx1, xs[i]); by1 = std::max(by1, ys[i]); ++k; }
+    if (!k) return;
+    // the disc's own rows: rows within 30 of the fill where at least 8 of
+    // the 25 pixels around its middle are circle colours; centre on them
+    const int cx = (bx0 + bx1 + 1) / 2;
+    auto disc_px = [](uint32_t c) {
+        c &= 0xFFFFFFu;
+        return c == 0x00289Au || c == 0x7979FBu || c == 0xBABAFBu || c == 0x3838FBu || c == 0x0871FBu || c == 0x0000FBu;
+    };
+    int top = 999, bot = -1;
+    for (int y = std::max(0, by1 - 30); y <= std::min(191, by1 + 30); ++y) {
+        int m = 0;
+        for (int x = std::max(0, cx - 12); x <= std::min(255, cx + 12); ++x) m += disc_px(bottom[y * 256 + x]);
+        if (m >= 8) { top = std::min(top, y); bot = std::max(bot, y); }
+    }
+    g_circle_x = cx;
+    g_circle_y = bot >= 0 && bot - top < 40 ? (top + bot) / 2 : std::max(0, by1 - 10);
+    g_circle_age = 0;
+}
+}
+
+bool srnx_special_next_circle(int* x, int* y) {
+    if (!g_srnx_special || g_circle_age > 30) return false;
+    *x = g_circle_x; *y = g_circle_y;
+    return true;
+}
+
 bool srnx_special_detect(const uint32_t* top, const uint32_t* bottom) {
     static bool on = false;
     static int run = 0;
+    find_circle(bottom);
     auto white = [](const uint32_t* s) {
         int n = 0, w = 0;
         for (int y = 60; y < 150; y += 3)

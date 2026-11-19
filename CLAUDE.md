@@ -21,6 +21,7 @@ Goal: a single-screen, modern widescreen presentation. Phase 1 joins both DS scr
 - Upstream sources stay on pinned commits; changes to ndsrecomp live in `switch/patches/0001-ndsrecomp-switch-portability.patch`.
 - WE pick the path. Upstreams are resources, never the design. Say plainly when a part is still emulation-style.
 - Never present a theory as a known cause. Be honest about what each test is for and what Mark should see.
+- Before naming the cause of a hang or wrong behaviour: disassemble the code at every address the log shows the game stuck on and find what it waits for, then read the port code that should answer that wait. Only when the game's code, the port's code and the log agree is it a cause; anything less is a lead and is called one. (switch-test21: an untranslated function was named as the cutscene hang's cause without looking at the loop; the loop was waiting on DISPSTAT's HBlank bit, which the port never set.)
 
 ## Required ROM
 

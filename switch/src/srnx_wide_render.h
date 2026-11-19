@@ -73,6 +73,10 @@ extern int g_srnx_act_start, g_srnx_card_bottom;
 // progress bar (right, upright) in the side bars. 424x240.
 extern int g_srnx_special;
 bool srnx_special_detect(const uint32_t* top, const uint32_t* bottom);
+// switch-test22: the numbered circle the game highlights next during a
+// special-stage jump (its 0x0871FB fill), in DS bottom-screen pixels. Kept for
+// 30 frames through the highlight's blink. False when there is none.
+bool srnx_special_next_circle(int* x, int* y);
 void srnx_special_compose(const uint32_t* top, const uint32_t* bottom, uint32_t* out, int pitch);
 extern int g_srnx_autocap;
 extern unsigned g_srnx_cam_swaps;
