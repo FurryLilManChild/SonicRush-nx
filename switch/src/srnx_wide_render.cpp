@@ -1147,13 +1147,42 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
     // a black bottom screen under a lit top (the pre-boss cutscene: the main
     // engine drives the black bottom there, the story is on top)
     if (!want && frac(bottom, 0, 192, 4, is_black) > 0.85f && frac(top, 0, 192, 4, is_black) < 0.6f) want = 3;
-    if (!want) want = main_on_top ? 3 : 4;
+    // switch-test26: the screens drawn as one tall picture over both screens
+    auto count = [](const uint32_t* s, int x0, int x1, int y0, int y1, bool (*f)(uint32_t)) {
+        int n = 0, k = 0;
+        for (int y = y0; y < y1; ++y)
+            for (int x = x0; x < x1; ++x, ++n) k += f(s[y * 256 + x]);
+        return std::make_pair(k, n);
+    };
+    auto is_grey = [](uint32_t c) {
+        const int r = ch(c, 16), g = ch(c, 8), b = ch(c, 0), mx = std::max(r, std::max(g, b));
+        return std::abs(r - g) < 20 && std::abs(g - b) < 20 && mx > 90 && mx < 225;
+    };
+    auto is_yellow = [](uint32_t c) { return ch(c, 16) > 200 && ch(c, 8) > 150 && ch(c, 0) < 80; };
+    auto is_button = [](uint32_t c) { return ch(c, 0) > 200 && ch(c, 16) < 120; };
+    if (!want) {
+        const auto press = count(bottom, 45, 205, 80, 91, is_grey);   // the PRESS START bar
+        const auto yel = count(top, 0, 256, 30, 110, is_yellow);      // the logo
+        if (yel.first > 2000 && press.first * 10 > press.second * 4) want = 9;
+    }
+    if (!want) {
+        const auto bar = count(top, 110, 240, 153, 168, is_black);    // the MENU label
+        const auto btn = count(bottom, 60, 180, 50, 70, is_button);   // the button column
+        if (btn.first * 10 > btn.second * 6 && (bar.first * 10 > bar.second * 4 || mode == 10)) want = 10;
+    }
+    if (!want && frac(top, 0, 192, 4, is_light) > 0.8f && frac(bottom, 0, 192, 4, is_light) > 0.8f) want = 8;
+    // anything else: the whole two-screen picture, shrunk to the height (it
+    // never flickers and never hides a screen; test25 picked one screen by the
+    // main engine, which some screens move between the two every few frames)
+    (void)main_on_top;
+    if (!want) want = 7;
     if (want != mode) {
         if (want != cand) { cand = want; run = 0; }
         if (++run >= 6 || mode == 0) {
             mode = want; run = 0;
             static const char* names[] = {"off", "special stage", "boss", "top screen", "bottom screen",
-                                          "special stage intro", "emerald result"};
+                                          "special stage intro", "emerald result", "both screens shrunk",
+                                          "logos", "title", "main menu"};
             std::fprintf(stderr, "[srnx] one-screen layout: %s\n", names[mode]);
         }
     } else run = 0;
@@ -1190,6 +1219,45 @@ void put_top_full(const uint32_t* src, uint32_t* out, int pitch) {
 void srnx_special_compose(int mode, const uint32_t* top, const uint32_t* bottom, uint32_t* out, int pitch) {
     if (mode == 3) { put_top_full(top, out, pitch); return; }
     if (mode == 4 || mode == 5) { put_top_full(bottom, out, pitch); return; }   // the bottom screen, same scaling
+    if (mode >= 7 && mode <= 10) {
+        // one tall picture: rows y0..y1 of the 256x384 column, scaled to 240
+        // high and centred; the sides are filled with each row's edge pixels
+        int y0 = 0, y1 = 384;
+        if (mode == 9) { y0 = 20; y1 = 300; }        // title: the logo down to PRESS START
+        if (mode == 10) { y0 = 0; y1 = 330; }        // menu: the art down to the buttons
+        auto px = [&](int x, int y) { return y < 192 ? top[y * 256 + x] : bottom[(y - 192) * 256 + x]; };
+        if (mode == 8) {
+            // logos: the SEGA band (top rows 36..155) over the SONIC TEAM band
+            // (bottom rows 36..155), unscaled
+            const uint32_t bg = top[5 * 256 + 5] | 0xFF000000u;
+            for (int y = 0; y < 240; ++y)
+                for (int x = 0; x < 424; ++x) out[(size_t)y * pitch + x] = bg;
+            for (int y = 0; y < 120; ++y)
+                for (int x = 0; x < 256; ++x) {
+                    out[(size_t)y * pitch + 84 + x] = top[(36 + y) * 256 + x] | 0xFF000000u;
+                    out[(size_t)(120 + y) * pitch + 84 + x] = bottom[(36 + y) * 256 + x] | 0xFF000000u;
+                }
+            return;
+        }
+        const int h = y1 - y0, w = 256 * 240 / h, ox = (424 - w) / 2;
+        for (int y = 0; y < 240; ++y) {
+            const int sy = y0 + y * h / 240;
+            const uint32_t l = px(0, sy) | 0xFF000000u, r = px(255, sy) | 0xFF000000u;
+            uint32_t* o = out + (size_t)y * pitch;
+            for (int x = 0; x < ox; ++x) o[x] = l;
+            for (int x = 0; x < w; ++x) {
+                // box filter over the source pixels this one covers
+                const int sx0 = x * 256 / w, sx1 = std::max(sx0 + 1, (x + 1) * 256 / w);
+                const int sy0 = sy, sy1 = std::max(sy0 + 1, y0 + (y + 1) * h / 240);
+                int rr = 0, gg = 0, bb = 0, n = 0;
+                for (int yy = sy0; yy < sy1 && yy < 384; ++yy)
+                    for (int xx = sx0; xx < sx1; ++xx) { const uint32_t c = px(xx, yy); rr += ch(c, 16); gg += ch(c, 8); bb += ch(c, 0); ++n; }
+                o[ox + x] = 0xFF000000u | (uint32_t)(rr / n) << 16 | (uint32_t)(gg / n) << 8 | (uint32_t)(bb / n);
+            }
+            for (int x = ox + w; x < 424; ++x) o[x] = r;
+        }
+        return;
+    }
     if (mode == 6) {
         // emerald result: the bottom screen, the banner across the top, the
         // emerald ring in the left bar
