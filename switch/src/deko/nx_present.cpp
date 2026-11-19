@@ -596,9 +596,9 @@ void present_now(const NxPresentFrame& f)
         return;
     }
     if (f.srnx_special && f.top && f.bottom && g_wide_ok) {
-        // switch-test20: special stage, one 424x240 view drawn on the CPU
+        // special stage, boss, cutscene: one 424x240 view drawn on the CPU
         const int vw = 424, vh = 240;
-        srnx_special_compose(f.top, f.bottom, g_wide_cpu[slot], kWideMaxW);
+        srnx_special_compose(f.srnx_special, f.top, f.bottom, g_wide_cpu[slot], kWideMaxW);
         g_cmd.clear();
         g_cmd.addMemory(g_cmd_mem, slot * kCmdSlotSize, kCmdSlotSize);
         dk::ImageView fb_view{g_fb[slot]};

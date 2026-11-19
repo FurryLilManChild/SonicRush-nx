@@ -499,7 +499,7 @@ index 022a1af..8c31a75 100644
  #endif
      if (supported) {
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 7d9d4eb..9d636c6 100644
+index 7d9d4eb..b13dc02 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
 @@ -4,6 +4,7 @@
@@ -1675,7 +1675,7 @@ index 7d9d4eb..9d636c6 100644
  PresentationTicks present_screens(FrontendPresentation& presentation,
                                    const uint32_t* top_pixels,
                                    int top_width,
-@@ -2141,8 +3071,236 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2141,8 +3071,237 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
  #endif
          return ticks;
      }
@@ -1769,8 +1769,8 @@ index 7d9d4eb..9d636c6 100644
 +            if (have) srnx_replay_record(wide_p, shown_d, top_pixels, bottom_pixels);
 +            else if (top_pixels && bottom_pixels) srnx_replay_record_ds(top_pixels, bottom_pixels);
 +            // switch-test20: special stages (3D on the bottom screen, ring count on the top)
-+            g_srnx_special = !have && g_nx_layout == kNxWide && top_pixels && bottom_pixels &&
-+                             srnx_special_detect(top_pixels, bottom_pixels);
++            g_srnx_special = (!have && g_nx_layout == kNxWide && top_pixels && bottom_pixels)
++                             ? srnx_special_detect(top_pixels, bottom_pixels) : 0;
 +            if (srnx_cap_pending) {
 +                srnx_cap_pending = false;
 +                // L3 saves the last 2 seconds (srnx_replay.h), in a stage or not
@@ -1904,7 +1904,8 @@ index 7d9d4eb..9d636c6 100644
 +#if defined(SRNX)
 +        // special stage: the bottom screen fills the view's middle 320x240
 +        // (3x: 960x720 at x 160 on the 1280x720 display); touch maps there
-+        if (g_srnx_special) g_nx_bottom_rect = SDL_Rect{160, 0, 960, 720};
++        if (g_srnx_special == 1) g_nx_bottom_rect = SDL_Rect{160, 0, 960, 720};
++        else if (g_srnx_special) g_nx_bottom_rect = SDL_Rect{0, 0, 0, 0};   // boss, cutscene: the bottom screen is not shown
 +#endif
 +        return ticks;
 +    }
@@ -1912,7 +1913,7 @@ index 7d9d4eb..9d636c6 100644
      uint64_t start = SDL_GetPerformanceCounter();
      SDL_UpdateTexture(presentation.textures[0], nullptr, top_pixels,
                        top_width * sizeof(uint32_t));
-@@ -2152,6 +3310,51 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2152,6 +3311,51 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
      if (!presentation.separate) {
          SDL_Renderer* renderer = presentation.renderers[0];
          start = SDL_GetPerformanceCounter();
@@ -1964,7 +1965,7 @@ index 7d9d4eb..9d636c6 100644
          SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
          SDL_RenderClear(renderer);
          const SDL_Rect top_rect{
-@@ -2169,6 +3372,9 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
+@@ -2169,6 +3373,9 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
                                  virtual_stylus_x, virtual_stylus_y);
          draw_savestate_notice(renderer, bottom_rect, savestate_notice);
          ticks.draw += SDL_GetPerformanceCounter() - start;
@@ -1974,7 +1975,7 @@ index 7d9d4eb..9d636c6 100644
          start = SDL_GetPerformanceCounter();
          SDL_RenderPresent(renderer);
          ticks.swap += SDL_GetPerformanceCounter() - start;
-@@ -2403,6 +3609,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2403,6 +3610,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      // rate directly; the sub-sample remainder is absorbed by the bounded queue
      // instead of producing a roughly once-per-second underrun at 32768 Hz.
      want.freq = kAudioFrequency;
@@ -1988,7 +1989,7 @@ index 7d9d4eb..9d636c6 100644
      want.format = AUDIO_S16SYS;
      want.channels = 2;
  #if !defined(NDS_HAVE_SDL3)
-@@ -2446,6 +3659,19 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2446,6 +3660,19 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          options.virtual_stylus.enabled && !mph_prime_controls_available;
      MphPrimeBindingSet mph_prime_bindings{};
      MphPadBindingSet mph_pad_bindings{};
@@ -2008,7 +2009,7 @@ index 7d9d4eb..9d636c6 100644
      if (mph_prime_controls_available) {
          mph_prime_bindings = make_mph_prime_bindings(options.mph_bindings);
          mph_pad_bindings = make_mph_pad_bindings(options.mph_pad_bindings);
-@@ -2520,7 +3746,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2520,7 +3747,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          nds_set_key_mask(static_cast<uint16_t>(
              0x0FFFu &
              ~(keyboard_pressed | controller_pressed | mouse_pressed |
@@ -2021,7 +2022,7 @@ index 7d9d4eb..9d636c6 100644
      };
      publish_keys();
      nds_set_touch(0, 0, false);
-@@ -2543,6 +3773,106 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2543,6 +3774,106 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      runtime_menu_config.items = runtime_menu_items;
      runtime_menu_config.item_count =
          sizeof(runtime_menu_items) / sizeof(runtime_menu_items[0]);
@@ -2128,7 +2129,7 @@ index 7d9d4eb..9d636c6 100644
      runtime_menu_config.callbacks.context = &runtime_menu_state;
      runtime_menu_config.callbacks.get_value = runtime_menu_get_value;
      runtime_menu_config.callbacks.set_value = runtime_menu_set_value;
-@@ -2552,6 +3882,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2552,6 +3883,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      runtime_menu_config.theme = "nds";
      runtime_menu_config.accept_label = "A / Enter";
      runtime_menu_config.back_label = "B / Backspace";
@@ -2139,7 +2140,7 @@ index 7d9d4eb..9d636c6 100644
      RecompRuntimeUi* runtime_ui =
          recomp_runtime_ui_create(&runtime_menu_config);
      if (!runtime_ui) {
-@@ -2561,6 +3895,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -2561,6 +3896,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
      bool mouse_down = false;
      bool touch_release_pending = false;
      uint32_t touch_frames_held = 0;
@@ -2154,7 +2155,7 @@ index 7d9d4eb..9d636c6 100644
      int64_t relative_delta_x = 0;
      int64_t relative_delta_y = 0;
      uint64_t relative_direct_writes = 0;
-@@ -3257,9 +4599,282 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3257,9 +4600,282 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  relative_mouse_selftest_stage = 10;
              }
          }
@@ -2437,7 +2438,7 @@ index 7d9d4eb..9d636c6 100644
              if (event.type == SDL_QUIT) {
                  release_relative_mouse();
                  running = false;
-@@ -3451,6 +5066,37 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3451,6 +5067,37 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  clear_virtual_stylus();
                  publish_keys();
              }
@@ -2475,7 +2476,7 @@ index 7d9d4eb..9d636c6 100644
              if (event.type == SDL_CONTROLLERBUTTONDOWN ||
                  event.type == SDL_CONTROLLERBUTTONUP) {
                  RecompRuntimeUiInput menu_input{};
-@@ -3707,10 +5353,51 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3707,10 +5354,58 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          if (controller) {
              // Left stick -> D-pad, with hysteresis so a stick resting near
              // a threshold never flickers a direction.
@@ -2490,9 +2491,9 @@ index 7d9d4eb..9d636c6 100644
 +            if ((nx_menunav_owns_pad() || nx_menunav_weapon_arc()) && !runtime_menu_open() && !nx_cursor_active) lx = ly = 0.0f;
 +#endif
 +#if defined(SRNX)
-+            // switch-test22: special stages without touch. The left stick
-+            // steers (a held touch on the lower track, slid left and right
-+            // with the stick; it lifts when the stick is let go), and A taps
++            // special stages without touch. The left stick steers (a held
++            // touch at the stick's angle around the half-pipe's centre; it
++            // lifts when the stick is let go), and A taps
 +            // the numbered circle the game highlights next during a jump.
 +            {
 +                static bool stick_touch = false, a_was = false;
@@ -2501,7 +2502,7 @@ index 7d9d4eb..9d636c6 100644
 +                    SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A);
 +                const bool a_edge = a && !a_was;
 +                a_was = a;
-+                if (g_srnx_special && !runtime_menu_open()) {
++                if (g_srnx_special == 1 && !runtime_menu_open()) {
 +                    int cx = 0, cy = 0;
 +                    const bool circle = srnx_special_next_circle(&cx, &cy);
 +                    if (a_edge && circle && tap == 0) { tap = 10; tap_x = cx; tap_y = cy; }
@@ -2511,9 +2512,16 @@ index 7d9d4eb..9d636c6 100644
 +                        else nds_set_touch(0, 0, false);
 +                        --tap;
 +                        stick_touch = false;
-+                    } else if (!circle && std::fabs(lx) > 0.2f) {
-+                        const float v = std::max(-1.0f, std::min(1.0f, lx));
-+                        nds_set_touch((uint16_t)(128 + (int)(v * 100.0f)), 140, true);
++                    } else if (!circle && lx * lx + ly * ly > 0.09f) {
++                        // switch-test23: Sonic goes where the stick points. The
++                        // game places him by the touch's angle around the
++                        // half-pipe's centre, about (128, 46) on the bottom
++                        // screen: stick down = the middle, full left = the
++                        // top of the left side, above level = a jump.
++                        const float len = std::sqrt(lx * lx + ly * ly);
++                        const int tx = 128 + (int)std::lround(lx / len * 100.0f);
++                        const int ty = 46 + (int)std::lround(ly / len * 100.0f);
++                        nds_set_touch((uint16_t)std::max(0, std::min(255, tx)), (uint16_t)std::max(0, std::min(191, ty)), true);
 +                        stick_touch = true;
 +                    } else if (stick_touch) {
 +                        nds_set_touch(0, 0, false);
@@ -2529,7 +2537,7 @@ index 7d9d4eb..9d636c6 100644
              const bool menu_open = runtime_menu_open();
              if (menu_open) {
                  if (stick_pressed != 0) {
-@@ -3764,10 +5451,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3764,10 +5459,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                          publish_keys();
                      }
                  };
@@ -2550,7 +2558,7 @@ index 7d9d4eb..9d636c6 100644
              }
  
              if (!menu_open && virtual_stylus_available) {
-@@ -3818,7 +5515,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3818,7 +5523,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  }
              }
  
@@ -2563,7 +2571,7 @@ index 7d9d4eb..9d636c6 100644
                  // Right stick -> camera aim; triggers act as bindable
                  // pseudo-buttons (defaults: RT shoot, LT scan-fire).
                  const float rx = SDL_GameControllerGetAxis(
-@@ -3829,6 +5530,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3829,6 +5538,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                      controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 9830;
                  const bool trigger_left = SDL_GameControllerGetAxis(
                      controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 9830;
@@ -2573,7 +2581,7 @@ index 7d9d4eb..9d636c6 100644
                  if (trigger_right != mph_pad_trigger_right_held) {
                      mph_pad_trigger_right_held = trigger_right;
                      process_mph_prime_pad(MphPadInputKind::TriggerRight,
-@@ -3920,7 +5624,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3920,7 +5632,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  MphPrimeAction::VirtualStylus)];
          const bool generic_virtual_stylus = virtual_stylus_active();
  
@@ -2586,7 +2594,7 @@ index 7d9d4eb..9d636c6 100644
          if (turbo_want != turbo_active) {
              turbo_active = turbo_want;
              if (audio) {
-@@ -3937,6 +5645,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3937,6 +5653,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                           turbo_active ? "on" : "off");
          }
  
@@ -2607,7 +2615,7 @@ index 7d9d4eb..9d636c6 100644
          if ((relative_mouse.captured() || mph_prime_pad_engaged) &&
              options.relative_mouse_direct_aim &&
              !mph_prime_virtual_stylus &&
-@@ -3989,6 +5711,88 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -3989,6 +5719,88 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                      nds_set_touch(128, 96, true);
              }
          }
@@ -2696,7 +2704,7 @@ index 7d9d4eb..9d636c6 100644
          if (options.custom_gamepad_bindings) {
              // Button events handle digital bindings; poll signed axes here.
              // Each row has one source, so clearing an axis row cannot release
-@@ -4186,8 +5990,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -4186,8 +5998,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  presentation, blend_cache.blended[0].data(), top_width,
                  blend_cache.blended[1].data(), bottom_width,
                  runtime_ui,
@@ -2708,7 +2716,7 @@ index 7d9d4eb..9d636c6 100644
                  savestate_notice.empty() ? nullptr : savestate_notice.c_str());
              if (!synthetic_ticks.ok) {
                  compute_failed = true;
-@@ -4210,14 +6015,18 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
+@@ -4210,14 +6023,18 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
              presentation, top_pixels, top_width,
              bottom_pixels, bottom_width,
              runtime_ui,

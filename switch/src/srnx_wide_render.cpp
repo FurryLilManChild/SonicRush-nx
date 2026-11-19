@@ -1093,35 +1093,92 @@ void find_circle(const uint32_t* bottom) {
 }
 
 bool srnx_special_next_circle(int* x, int* y) {
-    if (!g_srnx_special || g_circle_age > 30) return false;
+    if (g_srnx_special != 1 || g_circle_age > 30) return false;
     *x = g_circle_x; *y = g_circle_y;
     return true;
 }
 
-bool srnx_special_detect(const uint32_t* top, const uint32_t* bottom) {
-    static bool on = false;
-    static int run = 0;
-    find_circle(bottom);
+int srnx_special_detect(const uint32_t* top, const uint32_t* bottom) {
+    static int mode = 0, cand = 0, run = 0;
     auto white = [](const uint32_t* s) {
         int n = 0, w = 0;
         for (int y = 60; y < 150; y += 3)
             for (int x = 20; x < 236; x += 3, ++n) w += panel_bg(s[y * 256 + x]);
         return (float)w / n;
     };
-    int n = 0, blue = 0;   // the banner along the top
-    for (int y = 8; y < 32; y += 3)
-        for (int x = 4; x < 252; x += 4, ++n) { const uint32_t c = top[y * 256 + x]; blue += ch(c, 0) > ch(c, 16) + 40; }
-    const bool want = white(top) > 0.45f && white(bottom) < 0.3f && blue * 2 > n;
-    if (want != on) {
+    auto black = [](const uint32_t* s) {
+        int n = 0, b = 0;
+        for (int y = 0; y < 192; y += 4)
+            for (int x = 0; x < 256; x += 4, ++n) {
+                const uint32_t c = s[y * 256 + x];
+                b += std::max(ch(c, 16), std::max(ch(c, 8), ch(c, 0))) < 24;
+            }
+        return (float)b / n;
+    };
+    int want = 0;
+    {
+        int n = 0, blue = 0;   // the special stage banner along the top
+        for (int y = 8; y < 32; y += 3)
+            for (int x = 4; x < 252; x += 4, ++n) { const uint32_t c = top[y * 256 + x]; blue += ch(c, 0) > ch(c, 16) + 40; }
+        // (a cutscene's white dialog box on dark blue also passed this until
+        // the bottom screen had to be lit: it is black in cutscenes)
+        if (white(top) > 0.45f && white(bottom) < 0.3f && blue * 2 > n && black(bottom) < 0.5f) want = 1;
+    }
+    if (!want) {
+        // boss: the health panel on the bottom screen (red emblem, grey panel)
+        int red = 0, grey = 0;
+        for (int y = 90; y < 120; ++y)
+            for (int x = 23; x < 42; ++x) { const uint32_t c = bottom[y * 256 + x] & 0xFFFFFFu; red += c == 0xB20000u || c == 0xFB0000u; }
+        for (int y = 60; y < 64; ++y)
+            for (int x = 14; x < 120; ++x) grey += (bottom[y * 256 + x] & 0xFFFFFFu) == 0x516961u;
+        if (red >= 150 && grey >= 100) want = 2;
+    }
+    if (!want && black(bottom) > 0.85f && black(top) < 0.6f) want = 3;
+    if (want != mode) {
+        if (want != cand) { cand = want; run = 0; }
         if (++run >= 6) {
-            on = want; run = 0;
-            std::fprintf(stderr, "[srnx] special stage layout %s\n", on ? "on" : "off");
+            mode = want; run = 0;
+            static const char* names[] = {"off", "special stage", "boss", "top screen only"};
+            std::fprintf(stderr, "[srnx] one-screen layout: %s\n", names[mode]);
         }
     } else run = 0;
-    return on;
+    return mode;
 }
 
-void srnx_special_compose(const uint32_t* top, const uint32_t* bottom, uint32_t* out, int pitch) {
+namespace {
+void put_top_full(const uint32_t* src, uint32_t* out, int pitch) {
+    for (int y = 0; y < 240; ++y)
+        for (int x = 0; x < 424; ++x) out[(size_t)y * pitch + x] = 0xFF000000u;
+    for (int y = 0; y < 240; ++y) {
+        const int fy = y * 192 * 256 / 240, y0 = fy >> 8, y1 = std::min(y0 + 1, 191), wy = fy & 255;
+        for (int x = 0; x < 320; ++x) {
+            const int fx = x * 256 * 256 / 320, x0 = fx >> 8, x1 = std::min(x0 + 1, 255), wx = fx & 255;
+            const uint32_t a = mix(src[y0 * 256 + x0], src[y0 * 256 + x1], wx);
+            const uint32_t b = mix(src[y1 * 256 + x0], src[y1 * 256 + x1], wx);
+            out[(size_t)y * pitch + 52 + x] = mix(a, b, wy);
+        }
+    }
+}
+}
+
+void srnx_special_compose(int mode, const uint32_t* top, const uint32_t* bottom, uint32_t* out, int pitch) {
+    if (mode == 3) { put_top_full(top, out, pitch); return; }
+    if (mode == 2) {
+        // boss: the top screen, the skull and the health bars upright in the
+        // right bar (bars rotated so the full end is at the bottom)
+        put_top_full(top, out, pitch);
+        for (int y = 85; y < 104; ++y)
+            for (int x = 93; x < 115; ++x) out[(size_t)(40 + y - 85) * pitch + 387 + x - 93] = bottom[y * 256 + x] | 0xFF000000u;
+        // bars: x 47..113, y 104..126 on the bottom screen; rotated 90 degrees
+        // anticlockwise: source column -> output row (right end at the top)
+        const int bw = 67, bh = 23, ox = 372 + (52 - bh) / 2, oy = 70;
+        for (int r = 0; r < bw; ++r)
+            for (int c = 0; c < bh; ++c) {
+                const int sx = 47 + bw - 1 - r, sy = 104 + c;
+                out[(size_t)(oy + r) * pitch + ox + c] = bottom[sy * 256 + sx] | 0xFF000000u;
+            }
+        return;
+    }
     for (int y = 0; y < 240; ++y)
         for (int x = 0; x < 424; ++x) out[(size_t)y * pitch + x] = 0xFF000000u;
     // the track: bottom screen 256x192 to 320x240 at x 52 (bilinear)
