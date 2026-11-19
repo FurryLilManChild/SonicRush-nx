@@ -499,7 +499,7 @@ index 022a1af..8c31a75 100644
  #endif
      if (supported) {
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 7d9d4eb..ede4766 100644
+index 7d9d4eb..6a005f5 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
 @@ -4,6 +4,7 @@
@@ -2112,9 +2112,9 @@ index 7d9d4eb..ede4766 100644
 +        "Close the menu and return to the game.",
 +        RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, nullptr, 0, nullptr});
 +    nx_menu_items.push_back({kRuntimeQuitKey, "System", "Quit",
-+        "Quit MPH-nx. Save in the game first.",
++        "Quit SonicRush-nx. Save in the game first.",
 +        RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, nullptr, 0, nullptr});
-+    runtime_menu_config.title = "MPH-nx";
++    runtime_menu_config.title = "SonicRush-nx";
 +#if defined(MPHNX_LABEL)
 +    runtime_menu_config.subtitle = "Switch " MPHNX_LABEL;
 +#elif defined(MPHNX_VERSION)
