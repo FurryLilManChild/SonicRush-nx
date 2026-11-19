@@ -1032,14 +1032,29 @@ int ovfn_index(int ov, uint32_t addr) {
 }
 }
 int srnx_code_frame() {
-    static int i_logos = -2, i_title, i_menu;
-    if (i_logos == -2) {
-        // each screen's own per-frame function (overlay 1, Thumb)
-        i_logos = ovfn_index(1, 0x022CF661u);
-        i_title = ovfn_index(1, 0x022D4539u);
-        i_menu = ovfn_index(1, 0x022D7C05u);
-        std::fprintf(stderr, "[srnx] screen code: logos %d title %d menu %d (overlay 1 has %u functions, overlay 0 %u)\n",
-                     i_logos, i_title, i_menu, nr_ovfn_count_01, nr_ovfn_count_00);
+    // switch-test28: each screen's signature, a function that ran in every
+    // frame of that screen and in no frame of any other (logos, title, menu:
+    // host traces; the rest: test27 replays, 2026-11-19)
+    struct Sig { int ov; uint32_t addr; int scene; const char* name; int idx; };
+    static Sig sigs[] = {
+        {1, 0x02306A20u, 6, "emerald result", -2},
+        {1, 0x0230B594u, 5, "special stage intro", -2},
+        {1, 0x0230C0A4u, 1, "special stage", -2},
+        {1, 0x022E2AF9u, 11, "world map", -2},
+        {0, 0x02356711u, 12, "character select", -2},
+        {0, 0x022CA0A8u, 2, "boss", -2},
+        {0, 0x022CB218u, 13, "boss title card", -2},
+        {1, 0x022CF661u, 8, "logos", -2},
+        {1, 0x022D4539u, 9, "title", -2},
+        {1, 0x022D7C05u, 10, "main menu", -2},
+    };
+    static bool init = false;
+    if (!init) {
+        init = true;
+        for (Sig& g : sigs) {
+            g.idx = ovfn_index(g.ov, g.addr);
+            std::fprintf(stderr, "[srnx] screen code: %s = overlay %d %08X (index %d)\n", g.name, g.ov, g.addr, g.idx);
+        }
     }
     const uint32_t s = g_nr_ovserial;
     int n = 0;
@@ -1050,10 +1065,11 @@ int srnx_code_frame() {
             if (g_nr_ovstamp[ov][i] == s) g_srnx_codelist[n++] = t[i] | (ov ? 0x80000000u : 0u);
     }
     g_srnx_codelist_n = n;
+    // first match wins: the intro and result run the special stage's own
+    // function too, so they come before it
     int scene = 0;
-    if (i_logos >= 0 && g_nr_ovstamp[1][i_logos] == s) scene = 8;
-    else if (i_title >= 0 && g_nr_ovstamp[1][i_title] == s) scene = 9;
-    else if (i_menu >= 0 && g_nr_ovstamp[1][i_menu] == s) scene = 10;
+    for (const Sig& g : sigs)
+        if (g.idx >= 0 && g_nr_ovstamp[g.ov][g.idx] == s) { scene = g.scene; break; }
     ++g_nr_ovserial;
     return scene;
 }
@@ -1170,22 +1186,9 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
     // the game's own code decides first; the pixel checks below only cover
     // screens that have no code signature yet
     int want = code_scene;
-    if (!want) {
-        int n = 0, blue = 0;   // the special stage banner along the top
-        for (int y = 8; y < 32; y += 3)
-            for (int x = 4; x < 252; x += 4, ++n) { const uint32_t c = top[y * 256 + x]; blue += ch(c, 0) > ch(c, 16) + 40; }
-        // (test24: a "bottom less than 30% white" check here dropped the
-        // layout on the snowy finish; a cutscene is told apart by its black
-        // bottom screen instead)
-        // switch-test27: also the ring count's yellow digits and the progress
-        // rail's navy frame (the Blaze main menu passed the rest: rpl-003)
-        int yel = 0, navy = 0, nn = 0;
-        for (int y = 95; y < 145; ++y)
-            for (int x = 20; x < 236; ++x) { const uint32_t c = top[y * 256 + x]; yel += ch(c, 16) > 200 && ch(c, 8) > 150 && ch(c, 0) < 80; }
-        for (int y = 160; y < 184; ++y)
-            for (int x = 12; x < 246; ++x, ++nn) { const uint32_t c = top[y * 256 + x]; navy += ch(c, 0) > 120 && ch(c, 16) < 60; }
-        if (white(top) > 0.45f && blue * 2 > n && frac(bottom, 0, 192, 4, is_black) < 0.5f && yel > 500 && navy * 10 > nn * 4) want = 1;
-    }
+    // switch-test28: only two pixel checks remain, for screens without a code
+    // signature yet: a boss (only the zone 1 boss has one) and the pre-boss
+    // cutscene. Everything else is the game's code or the shrunk fallback.
     if (!want) {
         // boss: the health panel on the bottom screen (red emblem, grey panel)
         int red = 0, grey = 0;
@@ -1195,46 +1198,9 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
             for (int x = 14; x < 120; ++x) grey += (bottom[y * 256 + x] & 0xFFFFFFu) == 0x516961u;
         if (red >= 150 && grey >= 100) want = 2;
     }
-    // emerald result: the black banner along the top screen, light below it
-    if (!want && frac(top, 20, 36, 2, is_black) > 0.5f && frac(top, 50, 180, 4, is_light) > 0.8f) want = 6;
-    // special stage intro: the black hint strip on the bottom screen, light around it
-    if (!want && frac(bottom, 20, 27, 1, is_black) > 0.85f && frac(bottom, 0, 192, 4, is_light) > 0.4f &&
-        frac(top, 50, 180, 4, is_light) > 0.4f) want = 5;
     // a black bottom screen under a lit top (the pre-boss cutscene: the main
     // engine drives the black bottom there, the story is on top)
     if (!want && frac(bottom, 0, 192, 4, is_black) > 0.85f && frac(top, 0, 192, 4, is_black) < 0.6f) want = 3;
-    // switch-test26: the screens drawn as one tall picture over both screens
-    auto count = [](const uint32_t* s, int x0, int x1, int y0, int y1, bool (*f)(uint32_t)) {
-        int n = 0, k = 0;
-        for (int y = y0; y < y1; ++y)
-            for (int x = x0; x < x1; ++x, ++n) k += f(s[y * 256 + x]);
-        return std::make_pair(k, n);
-    };
-    auto is_grey = [](uint32_t c) {
-        const int r = ch(c, 16), g = ch(c, 8), b = ch(c, 0), mx = std::max(r, std::max(g, b));
-        return std::abs(r - g) < 20 && std::abs(g - b) < 20 && mx > 90 && mx < 225;
-    };
-    auto is_yellow = [](uint32_t c) { return ch(c, 16) > 200 && ch(c, 8) > 150 && ch(c, 0) < 80; };
-    auto is_button = [](uint32_t c) { return ch(c, 0) > 200 && ch(c, 16) < 120; };
-    if (!want) {
-        // world map (no code signature yet): green map below, the status panel
-        // and the blue strip on top
-        auto is_green = [](uint32_t c) { return ch(c, 8) > ch(c, 16) + 20 && ch(c, 8) > ch(c, 0) + 20; };
-        auto is_blue = [](uint32_t c) { return ch(c, 0) > 200 && ch(c, 16) < 80; };
-        const auto g = count(bottom, 0, 256, 0, 192, is_green), p = count(top, 12, 122, 12, 122, is_light), b = count(top, 0, 256, 150, 180, is_blue);
-        if (g.first * 4 > g.second && p.first * 10 > p.second * 4 && b.first * 100 > b.second * 15) want = 11;
-    }
-    if (!want) {
-        const auto press = count(bottom, 45, 205, 80, 91, is_grey);   // the PRESS START bar
-        const auto yel = count(top, 0, 256, 30, 110, is_yellow);      // the logo
-        if (yel.first > 2000 && press.first * 10 > press.second * 4) want = 9;
-    }
-    if (!want) {
-        const auto bar = count(top, 110, 240, 153, 168, is_black);    // the MENU label
-        const auto btn = count(bottom, 60, 180, 50, 70, is_button);   // the button column
-        if (btn.first * 10 > btn.second * 6 && (bar.first * 10 > bar.second * 4 || mode == 10)) want = 10;
-    }
-    if (!want && frac(top, 0, 192, 4, is_light) > 0.8f && frac(bottom, 0, 192, 4, is_light) > 0.8f) want = 8;
     // anything else: the whole two-screen picture, shrunk to the height (it
     // never flickers and never hides a screen; test25 picked one screen by the
     // main engine, which some screens move between the two every few frames)
@@ -1242,11 +1208,11 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
     if (!want) want = 7;
     if (want != mode) {
         if (want != cand) { cand = want; run = 0; }
-        if (++run >= 6 || mode == 0) {
+        if (++run >= 6 || mode == 0 || code_scene) {
             mode = want; run = 0;
             static const char* names[] = {"off", "special stage", "boss", "top screen", "bottom screen",
                                           "special stage intro", "emerald result", "both screens shrunk",
-                                          "logos", "title", "main menu", "world map"};
+                                          "logos", "title", "main menu", "world map", "character select", "boss title card"};
             std::fprintf(stderr, "[srnx] one-screen layout: %s\n", names[mode]);
         }
     } else run = 0;
@@ -1283,7 +1249,7 @@ void put_top_full(const uint32_t* src, uint32_t* out, int pitch) {
 void srnx_special_compose(int mode, const uint32_t* top, const uint32_t* bottom, uint32_t* out, int pitch) {
     if (mode == 3) { put_top_full(top, out, pitch); return; }
     if (mode == 4 || mode == 5) { put_top_full(bottom, out, pitch); return; }   // the bottom screen, same scaling
-    if (mode >= 7 && mode <= 10) {
+    if ((mode >= 7 && mode <= 10) || mode == 12 || mode == 13) {
         // one tall picture: rows y0..y1 of the 256x384 column, scaled to 240
         // high and centred; the sides are filled with each row's edge pixels
         int y0 = 0, y1 = 384;

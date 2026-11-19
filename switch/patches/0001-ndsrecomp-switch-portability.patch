@@ -499,7 +499,7 @@ index 022a1af..8c31a75 100644
  #endif
      if (supported) {
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 7d9d4eb..eb97692 100644
+index 7d9d4eb..bef8e82 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
 @@ -4,6 +4,7 @@
@@ -1913,8 +1913,8 @@ index 7d9d4eb..eb97692 100644
 +        // x 160) in the special stage, its intro, the emerald result and any
 +        // bottom-screen layout; touch maps there. Top-screen layouts show no
 +        // bottom screen to touch.
-+        if (g_srnx_special == 1 || (g_srnx_special >= 4 && g_srnx_special <= 6)) g_nx_bottom_rect = SDL_Rect{160, 0, 960, 720};
-+        else if (g_srnx_special == 7 || g_srnx_special == 9 || g_srnx_special == 10) {
++        if (g_srnx_special == 1 || (g_srnx_special >= 4 && g_srnx_special <= 6) || g_srnx_special == 11) g_nx_bottom_rect = SDL_Rect{160, 0, 960, 720};
++        else if (g_srnx_special == 7 || g_srnx_special == 9 || g_srnx_special == 10 || g_srnx_special == 12 || g_srnx_special == 13) {
 +            // a tall picture: rows y0..y1 of both screens scaled to the 240-high
 +            // view (3x on the 1280x720 display, 4 px margin); the bottom screen
 +            // is rows 192..383 of it
