@@ -1,5 +1,12 @@
 # Progress log (newest first)
 
+## 2026-11-18: switch-test19
+
+- Stage view locked: the stacked-screen fallback (wide_mismatch) is gone. Only at an act start, while the stage view does not match either DS screen, the act title card is shown as the main engine's DS screen scaled to the view height and centred (option b). The window closes after 8 matching frames or 15 seconds.
+- L3 replays everywhere. Outside the stage view the ring records both DS screens, both camera records, DISPCNT and POWCNT1 (marker 0xD5 in the head's last word); replay.py prints them. For boss and special stage planning.
+- Late sprite memory copy (test18) off: it put sprite tiles one frame ahead (robot glitch in rpl-005).
+- Rotation sanity check: a sprite matrix that scales past 4x or under 0.25x draws unrotated. Host: fast and reference sprite paths still agree (0 pixels differ). The affine source is still hardware OAM, not yet the table confirmed from a replay.
+
 ## 2026-11-15: switch-test3 result, our own camera (switch-test4)
 
 - switch-test3 (Mark): wide view fine while the game has Sonic on the top screen; once it moves him to the bottom screen the DS screens appear misaligned over the wide view. Cause (from camera data): camera record 0 is the main engine's (3D layer) and follows Sonic; when he drops below the old screen line it moves 272 px below record 1 and the main engine goes to the bottom LCD. The view assumed record 0 = top screen. Also 52-55 fps fell to 18-21 fps with the CPU wide drawing on the game thread.
