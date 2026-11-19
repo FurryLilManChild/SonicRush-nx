@@ -37,6 +37,7 @@
 #include "../native/srnx_wide.h"
 
 uint32_t nds_gpu2d_read(uint32_t addr, uint32_t width);
+const uint8_t* nds_vram_oam_live();
 extern "C" uint32_t bus_read_u32_slow(uint32_t addr);
 void nds_gpu2d_debug_regs(int e, uint16_t bgx[4], uint16_t bgy[4], int32_t refx[2],
                           int32_t refy[2], int16_t pabcd[8]);
@@ -348,11 +349,14 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
 
     {   // rotation/scale groups from engine A's OAM, and the blend registers
         uint8_t* af = data + p.off_spr + kSrnxAffOff;
+        // switch-test20: engine A's OAM as the 2D engine holds it. The bus
+        // read used since test16 returned 0 for every group (rpl-002 from
+        // test19: 120 frames, all zero), so every rotated sprite drew with a
+        // zero matrix: the boost blocks.
+        const uint8_t* oam = nds_vram_oam_live();
         for (uint32_t g = 0; g < 32; ++g)
-            for (uint32_t k = 0; k < 4; ++k) {
-                const uint16_t v = (uint16_t)(bus_read_u32_slow(0x07000000u + g * 32u + k * 8u + 4u) >> 16);   // hardware OAM (test16 source)
-                std::memcpy(af + (g * 4 + k) * 2, &v, 2);
-            }
+            for (uint32_t k = 0; k < 4; ++k)
+                std::memcpy(af + (g * 4 + k) * 2, oam + g * 32u + k * 8u + 6u, 2);
         const uint32_t bc = nds_gpu2d_read(0x04000050u, 2) & 0xFFFF, ba = nds_gpu2d_read(0x04000052u, 2) & 0xFFFF;
         std::memcpy(af + 256, &bc, 4);
         std::memcpy(af + 260, &ba, 4);
