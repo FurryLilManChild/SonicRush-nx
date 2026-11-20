@@ -1,5 +1,12 @@
 # Progress log (newest first)
 
+## 2026-11-20: switch-test33
+
+- test32 result (Mark): backgrounds much improved, but they change suddenly at times. rpl-011: the far background flips from sky to deep forest at frame 93, the frame the main DS screen's place in the view jumps (-127 to +130: the game moved Sonic to the other screen). The scaled far layer takes the main screen's BG1 rows, and the two screens show different slices.
+- Glide: a jump of more than 24 rows or columns in the main screen's BG1 scroll keeps the old slice and eases to the new one (1/12 of the remaining distance a frame, about half a second). Host: jumps of about 190 rows at act start and after a respawn; no stale rows seen during the act start glide. A mid-play screen swap was not reproduced on the host.
+- Main program functions are now in the per-frame code record too (NR_OVSTAMP group 2, nr_ovfn_02, 2584 functions; overlays first in the list). Mark's two pre-boss cutscene replays recorded no overlay functions on any frame, so the cutscene runs in the main program; its signature needs one more cutscene L3 with this build (no cutscene reachable on the host from the save or a new file). The cutscene pixel check stays until then.
+- Replays: stage frames the presenter has not drawn yet are left out (every stage replay ended with 2-3 black frames).
+
 ## 2026-11-19: switch-test32
 
 - test31 result (Mark): in acts the picture flipped between widescreen and a narrower one with Sonic larger. Cause (log + code): the test19 presenter act card window compared the stage view with the DS screens for 15 s after each act start; with the scaled far background the view never matches the DS, the score sat at the 0.82 trigger (log: 0.80-0.90) and the window opened and closed repeatedly, swapping in the DS screen scaled to the view height.

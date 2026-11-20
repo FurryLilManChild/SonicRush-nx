@@ -215,7 +215,7 @@ extern "C" void nr_remap(void) {
     g_ov_dirty = 1;
 }
 
-uint32_t g_nr_ovstamp[2][8192];
+uint32_t g_nr_ovstamp[3][8192];
 uint32_t g_nr_ovserial = 1;
 
 extern "C" uint32_t nr_io_rd32(uint32_t a) { ++g_nr_stats[NR_STAT_IO]; return bus_read_u32_slow(a); }

@@ -83,7 +83,7 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
 // address | 0x80000000 for overlay 1) and the screen they identify (8 logos,
 // 9 title, 10 main menu, 0 not known by code).
 int srnx_code_frame();
-extern uint32_t g_srnx_codelist[1800];
+extern uint32_t g_srnx_codelist[4096];
 extern int g_srnx_codelist_n;
 // switch-test22: the numbered circle the game highlights next during a
 // special-stage jump (its 0x0871FB fill), in DS bottom-screen pixels. Kept for

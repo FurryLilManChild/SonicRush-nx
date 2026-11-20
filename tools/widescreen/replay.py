@@ -42,7 +42,7 @@ def main():
             if 0 < n < 2047:
                 fns = struct.unpack_from('<%dI' % n, spr, 4)
                 with open(f'{out}/{i:03d}-fns.txt', 'w') as fh:
-                    fh.write('\n'.join('ov%02d %08X' % (1 if a >> 31 else 0, a & 0x7FFFFFFF) for a in fns) + '\n')
+                    fh.write('\n'.join(('ov01 %08X' % (a & 0x7FFFFFFF) if a >> 31 else ('ov00 %08X' % a if a >= 0x022C5C80 else 'main %08X' % a)) for a in fns) + '\n')
             continue
         Image.frombuffer('RGBA', (vw, vh), view, 'raw', 'BGRA', 0, 1).convert('RGB').save(f'{out}/{i:03d}-view.png')
         Image.frombuffer('RGBA', (256, 384), ds, 'raw', 'BGRA', 0, 1).convert('RGB').save(f'{out}/{i:03d}-ds.png')
@@ -61,7 +61,7 @@ def main():
         if 0 < n < 128:
             fns = struct.unpack_from('<%dI' % n, spr, 6148)
             with open(f'{out}/{i:03d}-fns.txt', 'w') as fh:
-                fh.write('\n'.join('ov%02d %08X' % (1 if a >> 31 else 0, a & 0x7FFFFFFF) for a in fns) + '\n')
+                fh.write('\n'.join(('ov01 %08X' % (a & 0x7FFFFFFF) if a >> 31 else ('ov00 %08X' % a if a >= 0x022C5C80 else 'main %08X' % a)) for a in fns) + '\n')
         with open(f'{out}/{i:03d}-spr.txt', 'w') as t:
             t.write(f'serial {serial} world {wx},{wy} main {mx},{my} dispcnt {dispcnt:08X} own3d {v3d}\n')
             for k in range(min(nspr + nhud, 384)):

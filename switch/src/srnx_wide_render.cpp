@@ -317,8 +317,35 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
         p.bg1_sx = ox + wx;
         p.bg1_sy = oy + wy;
         bgy[1] = (uint16_t)(oy + cam0y);
-        p.bg1_dsx = (int)L.bg1x;
-        p.bg1_dsy = oy + cam0y;
+        // switch-test33: the scaled far background takes the main DS screen's
+        // rows; when the game moves Sonic to the other screen those rows jump
+        // to another slice (rpl-011: sky to deep forest in one frame). Keep
+        // the old slice at the jump and glide to the new one (about half a
+        // second, easing out).
+        {
+            static int last_x = 0, last_y = 0, off_x = 0, off_y = 0;
+            static bool have_last = false;
+            const int rx = (int)L.bg1x, ry = oy + cam0y;
+            auto wrapd = [](int d) { d %= 512; if (d > 256) d -= 512; if (d < -256) d += 512; return d; };
+            if (have_last) {
+                const int jx = wrapd(rx - last_x), jy = wrapd(ry - last_y);
+                if (std::abs(jy) > 24) off_y -= jy;
+                if (std::abs(jx) > 24) off_x -= jx;
+                if (std::abs(jy) > 24 || std::abs(jx) > 24) {
+                    static int nlog = 0;
+                    if (nlog++ < 40) std::fprintf(stderr, "[srnx] far background slice jump %d,%d at %lluM: gliding\n", jx, jy, g_runtime_cycles / 1000000ull);
+                }
+            }
+            have_last = true; last_x = rx; last_y = ry;
+            auto ease = [](int& o) {
+                if (!o) return;
+                const int step = std::max(1, std::abs(o) / 12);
+                o += o > 0 ? -std::min(step, o) : std::min(step, -o);
+            };
+            ease(off_x); ease(off_y);
+            p.bg1_dsx = rx + off_x;
+            p.bg1_dsy = ry + off_y;
+        }
     }
     {   // The DS screen shows rows bgy..bgy+191 of the far background. When
         // that fits inside the picture without wrapping, the rows our taller
@@ -1074,17 +1101,20 @@ int g_srnx_special = 0;
 // reads which ran. Overlay 1 is the front end (logos, title, menus), overlay 0
 // the stages (host traces, 2026-11-19).
 extern "C" {
-extern uint32_t g_nr_ovstamp[2][8192];
+extern uint32_t g_nr_ovstamp[3][8192];
 extern uint32_t g_nr_ovserial;
-extern const uint32_t nr_ovfn_00[], nr_ovfn_01[];
-extern const unsigned nr_ovfn_count_00, nr_ovfn_count_01;
+extern const uint32_t nr_ovfn_00[], nr_ovfn_01[], nr_ovfn_02[];
+extern const unsigned nr_ovfn_count_00, nr_ovfn_count_01, nr_ovfn_count_02;
 }
-uint32_t g_srnx_codelist[1800];
+uint32_t g_srnx_codelist[4096];
 int g_srnx_codelist_n = 0;
 namespace {
+// group 0 = overlay 0, 1 = overlay 1, 2 = main program (switch-test33)
+const uint32_t* ovfn_table(int ov) { return ov == 2 ? nr_ovfn_02 : ov ? nr_ovfn_01 : nr_ovfn_00; }
+unsigned ovfn_count(int ov) { return std::min(ov == 2 ? nr_ovfn_count_02 : ov ? nr_ovfn_count_01 : nr_ovfn_count_00, 8192u); }
 int ovfn_index(int ov, uint32_t addr) {
-    const uint32_t* t = ov ? nr_ovfn_01 : nr_ovfn_00;
-    const unsigned n = ov ? nr_ovfn_count_01 : nr_ovfn_count_00;
+    const uint32_t* t = ovfn_table(ov);
+    const unsigned n = ovfn_count(ov);
     for (unsigned i = 0; i < n; ++i) if (t[i] == addr) return (int)i;
     return -1;
 }
@@ -1113,16 +1143,18 @@ int srnx_code_frame() {
         init = true;
         for (Sig& g : sigs) {
             g.idx = ovfn_index(g.ov, g.addr);
-            std::fprintf(stderr, "[srnx] screen code: %s = overlay %d %08X (index %d)\n", g.name, g.ov, g.addr, g.idx);
+            std::fprintf(stderr, "[srnx] screen code: %s = %s %d %08X (index %d)\n", g.name, g.ov == 2 ? "main" : "overlay", g.ov, g.addr, g.idx);
         }
     }
     const uint32_t s = g_nr_ovserial;
     int n = 0;
-    for (int ov = 0; ov < 2; ++ov) {
-        const uint32_t* t = ov ? nr_ovfn_01 : nr_ovfn_00;
-        const unsigned cnt = std::min(ov ? nr_ovfn_count_01 : nr_ovfn_count_00, 8192u);
-        for (unsigned i = 0; i < cnt && n < 1800; ++i)
-            if (g_nr_ovstamp[ov][i] == s) g_srnx_codelist[n++] = t[i] | (ov ? 0x80000000u : 0u);
+    // overlays first (stage replays keep only the first 127), then the main
+    // program (addresses below the overlay area, no flag)
+    for (int ov = 0; ov < 3; ++ov) {
+        const uint32_t* t = ovfn_table(ov);
+        const unsigned cnt = ovfn_count(ov);
+        for (unsigned i = 0; i < cnt && n < 4096; ++i)
+            if (g_nr_ovstamp[ov][i] == s) g_srnx_codelist[n++] = t[i] | (ov == 1 ? 0x80000000u : 0u);
     }
     g_srnx_codelist_n = n;
     // first match wins: the intro and result run the special stage's own

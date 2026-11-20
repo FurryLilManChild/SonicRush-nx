@@ -156,15 +156,24 @@ int srnx_replay_save(char* msg, int msg_len) {
     // file: "SRNXRPL1", frame count, view w, h, then per frame oldest first:
     // Head, ds (256x384 u32), v3d (vw x vh u32), view (vw x vh u32, zero if
     // the presenter never drew it), sprites (8192 bytes)
+    // switch-test33: a stage frame the presenter has not drawn yet (the last
+    // 2 or 3 at the moment L3 is pressed) has no picture: leave it out
+    // instead of saving it black. DS-only frames never have one.
+    auto keep = [&](const GameFrame& g) {
+        if (!g.h.serial) return false;
+        if ((g.h.pad >> 24) == 0xD5u) return true;
+        for (const auto& vf : g_view) if (vf.serial == g.h.serial) return true;
+        return false;
+    };
     int count = 0;
-    for (const auto& g : g_game) count += g.h.serial != 0;
+    for (const auto& g : g_game) count += keep(g);
     std::fwrite("SRNXRPL2", 1, 8, f);
     const int32_t hdr[3] = {count, g_vw, g_vh};
     std::fwrite(hdr, 4, 3, f);
     std::vector<uint32_t> zero((size_t)g_vw * g_vh, 0);
     for (int i = 0; i < kFrames; ++i) {
         const GameFrame& g = g_game[(g_game_next + i) % kFrames];
-        if (!g.h.serial) continue;
+        if (!keep(g)) continue;
         const ViewFrame* v = nullptr;
         for (const auto& vf : g_view) if (vf.serial == g.h.serial) { v = &vf; break; }
         std::fwrite(&g.h, sizeof(Head), 1, f);

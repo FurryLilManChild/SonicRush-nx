@@ -580,6 +580,9 @@ class FuncGen:
         if CURRENT_GROUP and CURRENT_GROUP.startswith('ov') and CURRENT_FN_INDEX >= 0:
             # which overlay functions ran this frame (screen identification)
             self.w('    NR_OVSTAMP(%d, %d);' % (int(CURRENT_GROUP[2:]), CURRENT_FN_INDEX))
+        elif CURRENT_GROUP == 'static' and CURRENT_FN_INDEX >= 0:
+            # switch-test33: main program functions too (group 2)
+            self.w('    NR_OVSTAMP(2, %d);' % CURRENT_FN_INDEX)
         self.w('    NR_LOCALS();')
         self.w('    uint32_t _sv, _sc; (void)_sv; (void)_sc;')
         # A call to the function's own entry address is a normal entry.
