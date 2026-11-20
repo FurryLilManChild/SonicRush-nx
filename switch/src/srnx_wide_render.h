@@ -67,7 +67,6 @@ void srnx_wide_inactive();
 // switch-test18: copy sprite memory again (one frame after the snapshot).
 void srnx_wide_refresh_obj(const SrnxWideParams& p, uint8_t* data);
 extern int g_srnx_obj_late;
-extern int g_srnx_act_start, g_srnx_card_bottom;
 // switch-test20: special stages. Detected from the two DS screens (the ring
 // panel on the top screen, 3D track on the bottom), with hysteresis; drawn as
 // the bottom screen at full height plus the ring count (left) and the
@@ -91,7 +90,6 @@ extern int g_srnx_codelist_n;
 // 30 frames through the highlight's blink. False when there is none.
 bool srnx_special_next_circle(int* x, int* y);
 void srnx_special_compose(int mode, const uint32_t* top, const uint32_t* bottom, uint32_t* out, int pitch);
-extern int g_srnx_autocap;
 extern unsigned g_srnx_cam_swaps;
 // End of frame, emulation thread: update the camera and fill params + data
 // (data must hold kSrnxDataBytes). top/bottom are the DS screens as drawn.

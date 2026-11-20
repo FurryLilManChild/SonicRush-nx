@@ -57,9 +57,6 @@ bool nx_deko_stage_image(const uint32_t** px, int* w, int* h, int* rx0, int* ry0
 void nx_deko_srnx_force_scale(int scale) __attribute__((weak));
 #include "srnx_remap.h"
 int g_srnx_own3d = 1;
-int g_srnx_act_start = 0;     // switch-test19: set on entering a stage (presenter opens the title card window)
-int g_srnx_card_bottom = 0;   // the main engine is on the bottom DS screen this frame
-int g_srnx_autocap = 0;          // switch-test15: 1 = Sonic without 3D, 2 = sudden mismatch (frontend saves a capture)
 unsigned g_srnx_cam_swaps = 0;   // camera-record swaps seen (log)
 static int g_rect_x, g_rect_y, g_rect_w = 0, g_rect_h = 0;
 
@@ -452,7 +449,6 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     // the latched camera puts within a pixel or so; the DS screen's level
     // pixels settle the exact spot.
     const uint32_t* mainscr = (cam0y > cam1y) ? bottom : top;
-    g_srnx_card_bottom = cam0y > cam1y ? 1 : 0;
     const uint32_t* f3d = nds_gpu2d_srnx_3d_frame(nullptr);
     p.main_valid = (mainscr && f3d && (p.dispcnt & 0x100)) ? 1u : 0u;
     p.v3d_valid = 0;
@@ -1257,12 +1253,6 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
     // test23 rewrote this function and lost this call: the highlighted
     // circle was never found, so neither button tapped
     find_circle(bottom);
-    auto white = [](const uint32_t* s) {
-        int n = 0, w = 0;
-        for (int y = 60; y < 150; y += 3)
-            for (int x = 20; x < 236; x += 3, ++n) w += panel_bg(s[y * 256 + x]);
-        return (float)w / n;
-    };
     auto frac = [](const uint32_t* s, int y0, int y1, int step, bool (*f)(uint32_t)) {
         int n = 0, k = 0;
         for (int y = y0; y < y1; y += step)
@@ -1270,15 +1260,17 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
         return (float)k / n;
     };
     auto is_black = [](uint32_t c) { return std::max(ch(c, 16), std::max(ch(c, 8), ch(c, 0))) < 40; };
-    auto is_light = [](uint32_t c) { return std::min(ch(c, 16), std::min(ch(c, 8), ch(c, 0))) > 190; };
     // switch-test25: never stacked. A screen recognised below gets its own
     // layout; anything else shows the screen the main 2D engine drives
     // (POWCNT1 bit 15) at full height.
     // the game's own code decides first; the pixel checks below only cover
     // screens that have no code signature yet
     int want = code_scene;
-    // switch-test31: one pixel check remains, for the pre-boss cutscene.
-    // Everything else is the game's code or the shrunk fallback.
+    // switch-test32: one layout pixel check remains, for the pre-boss
+    // cutscene, which has no code signature yet (its replay recorded no
+    // overlay functions). Everything else is the game's code or the shrunk
+    // fallback. find_circle above is not a layout check: it finds the
+    // highlighted circle the A button taps in special stages.
     // a black bottom screen under a lit top (the pre-boss cutscene: the main
     // engine drives the black bottom there, the story is on top)
     if (!want && frac(bottom, 0, 192, 4, is_black) > 0.85f && frac(top, 0, 192, 4, is_black) < 0.6f) want = 3;

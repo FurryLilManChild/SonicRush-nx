@@ -421,70 +421,9 @@ bool nx_present_init()
 }
 
 namespace {
-// switch-test19: the stage view never falls back to stacked screens. Only at
-// an act start, before play begins, the act title card (drawn in a layer the
-// stage view does not draw) is shown as the one DS screen that has it,
-// scaled to the view height and centred. The window closes for the rest of
-// the act once the stage view has matched the DS screen for 8 frames, or
-// after 15 seconds.
-float wide_mismatch_value(const SrnxWideParams& p, const uint32_t* view, const uint32_t* ds)
-{
-    if (!ds) return 1.0f;
-    int n = 0, diff = 0;
-    for (int y = 2; y < 192; y += 6) {
-        const int vy = p.main_y + y;
-        if (vy < 0 || vy >= p.view_h) continue;
-        for (int x = 2; x < 256; x += 6) {
-            const int vx = p.main_x + x;
-            if (vx < 0 || vx >= p.view_w) continue;
-            const uint32_t a = view[(size_t)vy * kWideMaxW + vx], b = ds[y * 256 + x];
-            const int d = std::abs((int)((a >> 16) & 255) - (int)((b >> 16) & 255)) +
-                          std::abs((int)((a >> 8) & 255) - (int)((b >> 8) & 255)) + std::abs((int)(a & 255) - (int)(b & 255));
-            ++n;
-            diff += d > 24;
-        }
-    }
-    return n > 200 ? (float)diff / n : 1.0f;
-}
-
-// Returns the DS screen to show as the act title card, or nullptr for the stage view.
-const uint32_t* act_card(const SrnxWideParams& p, const uint32_t* view, const uint32_t* top, const uint32_t* bottom)
-{
-    static bool window = false, showing = false;
-    static int good = 0, frames = 0;
-    if (g_srnx_act_start) {
-        g_srnx_act_start = 0;
-        window = true; showing = false; good = 0; frames = 0;
-    }
-    if (!window) return nullptr;
-    const float mt = wide_mismatch_value(p, view, top), mb = wide_mismatch_value(p, view, bottom);
-    const float best = std::min(mt, mb);
-    if (++frames > 15 * 60) window = false;
-    if (best < 0.2f) { if (++good >= 8) window = false; } else good = 0;
-    const bool want = window && best > 0.82f;
-    if (want != showing) {
-        showing = want;
-        std::fprintf(stderr, "[present] act title card %s (mismatch %.2f)\n", showing ? "shown in the single view" : "done", best);
-    }
-    if (!window && showing) showing = false;
-    if (!showing) return nullptr;
-    return g_srnx_card_bottom ? bottom : top;   // the main engine's screen (snapshot)
-}
-
-// Draw one DS screen scaled to the view height, centred, black either side.
-void draw_card(const SrnxWideParams& p, const uint32_t* ds, uint32_t* out)
-{
-    const int vw = p.view_w, vh = p.view_h;
-    const int dw = 256 * vh / 192, x0 = (vw - dw) / 2;
-    for (int y = 0; y < vh; ++y) {
-        uint32_t* o = out + (size_t)y * kWideMaxW;
-        const uint32_t* src = ds + (size_t)(y * 192 / vh) * 256;
-        for (int x = 0; x < vw; ++x) {
-            const int sx = x - x0;
-            o[x] = (sx >= 0 && sx < dw) ? (src[sx * 256 / dw] | 0xFF000000u) : 0xFF000000u;
-        }
-    }
-}
+// switch-test32: the test19 act title card window (a pixel comparison of the
+// stage view against the DS screens) is gone; cards are identified by the
+// game's code in srnx_code_frame and drawn by the special-modes path.
 
 void present_now(const NxPresentFrame& f)
 {
@@ -542,8 +481,6 @@ void present_now(const NxPresentFrame& f)
         } else {
             srnx_wide_draw_cpu(wp, f.wide_data, g_wide_cpu[slot], kWideMaxW);
             srnx_replay_view(wp, f.wide_data, g_wide_cpu[slot], kWideMaxW);
-            // Act start only: the title card, as one DS screen scaled to the view.
-            if (const uint32_t* card = act_card(wp, g_wide_cpu[slot], f.top, f.bottom)) draw_card(wp, card, g_wide_cpu[slot]);
         }
         // black edges, then the view at the largest scale that fits (whole
         // numbers stay pixel-sharp: 424x240 is exactly 3x on 720p)

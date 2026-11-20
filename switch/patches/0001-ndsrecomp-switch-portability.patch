@@ -499,7 +499,7 @@ index 022a1af..8c31a75 100644
  #endif
      if (supported) {
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 7d9d4eb..306b04f 100644
+index 7d9d4eb..aa0453e 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
 @@ -4,6 +4,7 @@
@@ -1775,7 +1775,7 @@ index 7d9d4eb..306b04f 100644
 +            g_srnx_wide = stage_view ? 1 : 0;
 +            if (!have) srnx_wide_inactive();
 +            g_srnx_hide_hud = stage_view ? 1 : 0;
-+            if (have && !was_stage) { nx_present_wide_check(3); g_srnx_act_start = 1; }
++            if (have && !was_stage) nx_present_wide_check(3);
 +            if (stage_view) srnx_replay_record(wide_p, shown_d, top_pixels, bottom_pixels);
 +            else if (top_pixels && bottom_pixels) srnx_replay_record_ds(top_pixels, bottom_pixels);
 +            // switch-test20: special stages (3D on the bottom screen, ring count on the top)

@@ -1,5 +1,11 @@
 # Progress log (newest first)
 
+## 2026-11-19: switch-test32
+
+- test31 result (Mark): in acts the picture flipped between widescreen and a narrower one with Sonic larger. Cause (log + code): the test19 presenter act card window compared the stage view with the DS screens for 15 s after each act start; with the scaled far background the view never matches the DS, the score sat at the 0.82 trigger (log: 0.80-0.90) and the window opened and closed repeatedly, swapping in the DS screen scaled to the view height.
+- Removed: that window (act_card, draw_card, wide_mismatch_value), g_srnx_act_start, g_srnx_card_bottom, g_srnx_autocap, unused pixel helpers in srnx_special_detect. Cards are the code check only.
+- Kept: the pre-boss cutscene pixel check (no code signature yet: its replay recorded no overlay functions) and find_circle (special stage tap target, not a layout check). menunav is the stub; the MPH boot splash skip is already off for this game.
+
 ## 2026-11-19: switch-test31
 
 - test30 result (Mark): title cards fine; zone 2 boss stacked whenever Sonic was on the ground; respawn showed the lines; zone 2 backgrounds (city cut off and repeating, sky underwater, water line).
