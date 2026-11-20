@@ -1137,6 +1137,11 @@ int srnx_code_frame() {
         {1, 0x022CF661u, 8, "logos", -2},
         {1, 0x022D4539u, 9, "title", -2},
         {1, 0x022D7C05u, 10, "main menu", -2},
+        // switch-test33: story cutscene (dialogue on the top screen). Main
+        // program function: runs on 1434 of 1518 frames of the zone 2 pre-boss
+        // cutscene (host, Mark's new save; the rest is its closing fade) and in
+        // none of 9104 frames of menus, world map, cards, stage play and boss
+        {2, 0x02060E8Du, 3, "cutscene", -2},
     };
     static bool init = false;
     if (!init) {
@@ -1157,6 +1162,8 @@ int srnx_code_frame() {
             if (g_nr_ovstamp[ov][i] == s) g_srnx_codelist[n++] = t[i] | (ov == 1 ? 0x80000000u : 0u);
     }
     g_srnx_codelist_n = n;
+    int n_ov = 0;
+    for (int i = 0; i < n; ++i) n_ov += (g_srnx_codelist[i] & 0x7FFFFFFFu) >= 0x022C5C80u || (g_srnx_codelist[i] >> 31);
     // first match wins: the intro and result run the special stage's own
     // function too, so they come before it
     int scene = 0;
@@ -1177,6 +1184,12 @@ int srnx_code_frame() {
         const bool playing = play >= 0 && g_nr_ovstamp[0][play] == s;
         streak = (in_stage && !playing) ? streak + 1 : 0;
         if (streak >= 1 && (scene == 0 || scene == 2)) scene = 14;
+    }
+    {   // switch-test33: the cutscene's closing fade runs no cutscene code and
+        // no overlay code either; keep the cutscene layout through it
+        static int last = 0;
+        if (scene == 0 && last == 3 && n_ov == 0) scene = 3;
+        last = scene;
     }
     // switch-test30: the emerald result's code (0x02306A20) does not run on
     // every frame while the special stage's code still does, so test29
@@ -1285,31 +1298,18 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
     // test23 rewrote this function and lost this call: the highlighted
     // circle was never found, so neither button tapped
     find_circle(bottom);
-    auto frac = [](const uint32_t* s, int y0, int y1, int step, bool (*f)(uint32_t)) {
-        int n = 0, k = 0;
-        for (int y = y0; y < y1; y += step)
-            for (int x = 0; x < 256; x += 2, ++n) k += f(s[y * 256 + x]);
-        return (float)k / n;
-    };
-    auto is_black = [](uint32_t c) { return std::max(ch(c, 16), std::max(ch(c, 8), ch(c, 0))) < 40; };
     // switch-test25: never stacked. A screen recognised below gets its own
     // layout; anything else shows the screen the main 2D engine drives
     // (POWCNT1 bit 15) at full height.
-    // the game's own code decides first; the pixel checks below only cover
-    // screens that have no code signature yet
+    // the game's own code decides
     int want = code_scene;
-    // switch-test32: one layout pixel check remains, for the pre-boss
-    // cutscene, which has no code signature yet (its replay recorded no
-    // overlay functions). Everything else is the game's code or the shrunk
-    // fallback. find_circle above is not a layout check: it finds the
-    // highlighted circle the A button taps in special stages.
-    // a black bottom screen under a lit top (the pre-boss cutscene: the main
-    // engine drives the black bottom there, the story is on top)
-    if (!want && frac(bottom, 0, 192, 4, is_black) > 0.85f && frac(top, 0, 192, 4, is_black) < 0.6f) want = 3;
+    // switch-test33: no layout pixel checks remain: every layout is the
+    // game's code or the shrunk fallback. find_circle above is not a layout
+    // check: it finds the highlighted circle the A button taps in special stages.
     // anything else: the whole two-screen picture, shrunk to the height (it
     // never flickers and never hides a screen; test25 picked one screen by the
     // main engine, which some screens move between the two every few frames)
-    (void)main_on_top;
+    (void)main_on_top; (void)top;
     if (!want) want = 7;
     if (want != mode) {
         if (want != cand) { cand = want; run = 0; }
