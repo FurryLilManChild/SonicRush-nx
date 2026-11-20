@@ -320,6 +320,8 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
         p.bg1_sx = ox + wx;
         p.bg1_sy = oy + wy;
         bgy[1] = (uint16_t)(oy + cam0y);
+        p.bg1_dsx = (int)L.bg1x;
+        p.bg1_dsy = oy + cam0y;
     }
     {   // The DS screen shows rows bgy..bgy+191 of the far background. When
         // that fits inside the picture without wrapping, the rows our taller
@@ -702,18 +704,98 @@ void srnx_wide_align_main(SrnxWideParams& p, const uint8_t* data, const uint32_t
 // layer by DS rules (sprite above a BG of the same priority, BG0 = 3D above
 // higher-numbered BGs); a partly transparent 3D edge blends with what is
 // below it; master brightness over all; HUD on top.
+// switch-test31: the far background (BG1) scaled evenly to the view width
+// (Mark: keep its shape, fill the width). The game keeps only what the DS
+// screen shows valid (zone 2: a 512x512 map refilled as the camera moves, so
+// the view's extra width showed a cut and a repeat). The DS screen's 256
+// columns fill the view's width; the scale is the same vertically, with the
+// bottom of the DS screen's rows at the bottom of the view (the top rows,
+// sky, are the part left out). Smoothed (bilinear) since the scale is not a
+// whole number; the level and sprites stay sharp. The DS scroll drives it,
+// so it moves view-width/256 times as fast on screen as on the DS.
+uint32_t g_bg1[kSrnxWideMaxW * kSrnxWideMaxH];   // 0 = transparent, else 0xFFRRGGBB
+static uint32_t g_bg1_src[194 * 257];
+void fill_bg1_scaled(const Src& s, int W, int H) {
+    const SrnxWideParams& p = s.p;
+    if (!((p.dispcnt >> 9) & 1)) { std::memset(g_bg1, 0, sizeof(uint32_t) * (size_t)W * H); return; }
+    const uint32_t c = p.bgcnt[1];
+    const uint32_t char_off = ((p.dispcnt >> 24) & 7) * 0x10000u, map_off = ((p.dispcnt >> 27) & 7) * 0x10000u;
+    const uint32_t chrbase = char_off + ((c >> 2) & 15) * 0x4000u;
+    const uint32_t mapbase = map_off + ((c >> 8) & 31) * 0x800u;
+    const int size = (c >> 14) & 3;
+    const int lw = (size & 1) ? 512 : 256, lh = (size & 2) ? 512 : 256;
+    constexpr uint32_t M = kSrnxBgVram - 1;
+    // source rows shown: the DS screen's rows r0..191 (r0 from the scale)
+    const int rows = std::min(192, (H * 256 + W - 1) / W + 1);
+    const int r0 = 192 - rows;
+    for (int ry = 0; ry < rows; ++ry) {
+        const int yy = (((p.bg1_dsy + r0 + ry) % lh) + lh) % lh;
+        for (int rx = 0; rx < 257; ++rx) {
+            const int xx = (((p.bg1_dsx + std::min(rx, 255)) % lw) + lw) % lw;
+            const int tx = xx >> 3, ty = yy >> 3;
+            uint32_t sb = 0;
+            if (lw == 512 && tx >= 32) sb += 1;
+            if (lh == 512 && ty >= 32) sb += (lw == 512) ? 2 : 1;
+            const uint16_t ent = s.u16(p.off_bg + ((mapbase + sb * 0x800u + (uint32_t)(((ty & 31) * 32 + (tx & 31)) * 2)) & M));
+            int px = xx & 7, py = yy & 7;
+            if (ent & 0x400) px = 7 - px;
+            if (ent & 0x800) py = 7 - py;
+            const uint32_t t = ent & 0x3FF;
+            uint32_t v;
+            if (c & 0x80) v = s.u8(p.off_bg + ((chrbase + t * 64 + py * 8 + px) & M));
+            else { const uint8_t b = s.u8(p.off_bg + ((chrbase + t * 32 + py * 4 + px / 2) & M)); v = (px & 1) ? (b >> 4) : (b & 15); }
+            g_bg1_src[ry * 257 + rx] = v ? rgb(s.u16(p.off_bgpal + 2 * ((c & 0x80) ? v : ((ent >> 12) * 16 + v)))) : 0u;
+        }
+    }
+    // output pixel centres mapped into the source (Q8), bottom-anchored
+    const int64_t step = ((int64_t)256 << 8) / W;               // source pixels per view pixel, Q8
+    for (int y = 0; y < H; ++y) {
+        int64_t sy = (int64_t)rows * 256 - (int64_t)(H - y) * step + step / 2 - 128;
+        if (sy < 0) sy = 0;
+        const int y0 = (int)(sy >> 8), y1 = std::min(y0 + 1, rows - 1);
+        const uint32_t fy = (uint32_t)(sy & 255);
+        uint32_t* o = g_bg1 + (size_t)y * W;
+        for (int x = 0; x < W; ++x) {
+            int64_t sx = (int64_t)x * step + step / 2 - 128;
+            if (sx < 0) sx = 0;
+            const int x0 = (int)(sx >> 8), x1 = std::min(x0 + 1, 256);
+            const uint32_t fx = (uint32_t)(sx & 255);
+            const uint32_t a = g_bg1_src[y0 * 257 + x0], b = g_bg1_src[y0 * 257 + x1];
+            const uint32_t cc = g_bg1_src[y1 * 257 + x0], d = g_bg1_src[y1 * 257 + x1];
+            if (!a || !b || !cc || !d) {   // an edge with see-through pixels: nearest
+                const uint32_t n = g_bg1_src[(fy < 128 ? y0 : y1) * 257 + (fx < 128 ? x0 : x1)];
+                o[x] = n;
+                continue;
+            }
+            uint32_t r = 0;
+            for (int sh = 0; sh < 24; sh += 8) {
+                const uint32_t top = ((a >> sh) & 255) * (256 - fx) + ((b >> sh) & 255) * fx;
+                const uint32_t bot = ((cc >> sh) & 255) * (256 - fx) + ((d >> sh) & 255) * fx;
+                r |= (((top * (256 - fy) + bot * fy) >> 16) & 255) << sh;
+            }
+            o[x] = 0xFF000000u | r;
+        }
+    }
+}
+
 uint32_t srnx_wide_pixel(const Src& s, int x, int y) {
     const SrnxWideParams& p = s.p;
     // BGs, front to back
     uint16_t bcol = 0;
+    uint32_t bfull = 0;
     int bprio = 4, bkey = 99;
     for (int i = 2; i >= 0; --i) {
         const int bg = (int)p.order[i];
         if (bg > 3 || !((p.dispcnt >> (8 + bg)) & 1)) continue;
         uint16_t cc;
+        if (bg == 1) {   // switch-test31: the scaled far background (fill_bg1_scaled)
+            const uint32_t f = g_bg1[(size_t)y * p.view_w + x];
+            if (f) { bfull = f; bprio = p.bgcnt[bg] & 3; bkey = bprio * 8 + 2 + bg; break; }
+            continue;
+        }
         if (bg_pixel(s, bg, x, y, cc)) { bcol = cc; bprio = p.bgcnt[bg] & 3; bkey = bprio * 8 + 2 + bg; break; }
     }
-    uint32_t below = bkey < 99 ? rgb(bcol) : p.backdrop;
+    uint32_t below = bkey < 99 ? (bfull ? bfull : rgb(bcol)) : p.backdrop;
     int below_key = bkey;
     // sprites
     uint16_t sc; int sp = 4;
@@ -752,6 +834,9 @@ uint32_t srnx_wide_pixel(const Src& s, int x, int y) {
 // Reference: one pixel at a time (slow; host checks only).
 void srnx_wide_draw_ref(const SrnxWideParams& p, const uint8_t* data, uint32_t* out, int pitch) {
     const Src s{p, data};
+    if (p.view_w <= 0 || p.view_h <= 0 || p.view_w > kSrnxWideMaxW || p.view_h > kSrnxWideMaxH) return;
+    rgb(0);
+    fill_bg1_scaled(s, p.view_w, p.view_h);
     for (int y = 0; y < p.view_h; ++y)
         for (int x = 0; x < p.view_w; ++x)
             out[y * pitch + x] = srnx_wide_pixel(s, x, y);
@@ -859,13 +944,14 @@ void srnx_wide_draw_cpu(const SrnxWideParams& p, const uint8_t* data, uint32_t* 
     if (W <= 0 || H <= 0 || W > kSrnxWideMaxW || H > kSrnxWideMaxH) return;
     rgb(0);                                                  // LUT ready
     const uint32_t* lut = g_rgb_lut;
+    fill_bg1_scaled(s, W, H);
     for (int y = 0; y < H; ++y) {
         uint32_t* o = out + (size_t)y * pitch;
         for (int x = 0; x < W; ++x) o[x] = p.backdrop;
     }
     std::memset(g_key, 99, (size_t)W * H);
 
-    const uint32_t char_off = ((p.dispcnt >> 24) & 7) * 0x10000u, map_off = ((p.dispcnt >> 27) & 7) * 0x10000u;
+    const uint32_t char_off = ((p.dispcnt >> 24) & 7) * 0x10000u;
     const bool ext = (p.dispcnt >> 30) & 1;
     const uint8_t* vram = data + p.off_bg;
     constexpr uint32_t M = kSrnxBgVram - 1;
@@ -876,38 +962,14 @@ void srnx_wide_draw_cpu(const SrnxWideParams& p, const uint8_t* data, uint32_t* 
         const uint32_t c = p.bgcnt[bg];
         const uint8_t key = (uint8_t)((c & 3) * 8 + 2 + bg);
         const uint32_t chrbase = char_off + ((c >> 2) & 15) * 0x4000u;
-        if (bg == 1) {
-            const int size = (c >> 14) & 3;
-            const int lw = (size & 1) ? 512 : 256, lh = (size & 2) ? 512 : 256;
-            const uint32_t mapbase = map_off + ((c >> 8) & 31) * 0x800u;
-            const bool b8 = c & 0x80;
+        if (bg == 1) {   // switch-test31: the scaled far background (fill_bg1_scaled)
+            (void)chrbase;
             for (int y = 0; y < H; ++y) {
-                const int yy = bg1_row(p, y, lh);
-                const int ty = yy >> 3, py0 = yy & 7;
                 uint32_t* o = out + (size_t)y * pitch;
                 uint8_t* k = g_key + (size_t)y * W;
-                for (int x = 0; x < W;) {
-                    const int xx = (x + p.bg1_sx) & (lw - 1);
-                    const int tx = xx >> 3;
-                    const int span = std::min(8 - (xx & 7), W - x);
-                    uint32_t sb = 0;
-                    if (lw == 512 && tx >= 32) sb += 1;
-                    if (lh == 512 && ty >= 32) sb += (lw == 512) ? 2 : 1;
-                    const uint16_t ent = s.u16(p.off_bg + ((mapbase + sb * 0x800u + (uint32_t)(((ty & 31) * 32 + (tx & 31)) * 2)) & M));
-                    const uint32_t t = ent & 0x3FF;
-                    const int py = (ent & 0x800) ? 7 - py0 : py0;
-                    const uint32_t pal = (ent >> 12) * 16;
-                    for (int j = 0; j < span; ++j, ++x) {
-                        int px = (xx + j) & 7;
-                        if (ent & 0x400) px = 7 - px;
-                        uint32_t v;
-                        if (b8) v = vram[(chrbase + t * 64 + py * 8 + px) & M];
-                        else { const uint8_t b = vram[(chrbase + t * 32 + py * 4 + px / 2) & M]; v = (px & 1) ? (b >> 4) : (b & 15); }
-                        if (!v) continue;
-                        o[x] = lut[s.u16(p.off_bgpal + 2 * (b8 ? v : pal + v)) & 0x7FFF];
-                        k[x] = key;
-                    }
-                }
+                const uint32_t* f = g_bg1 + (size_t)y * W;
+                for (int x = 0; x < W; ++x)
+                    if (f[x]) { o[x] = f[x]; k[x] = key; }
             }
             continue;
         }
@@ -1042,8 +1104,10 @@ int srnx_code_frame() {
         {1, 0x0230C0A4u, 1, "special stage", -2},
         {1, 0x022E2AF9u, 11, "world map", -2},
         {0, 0x02356711u, 12, "character select", -2},
-        {0, 0x022CA0A8u, 2, "boss", -2},
-        {0, 0x022CB218u, 13, "boss title card", -2},
+        // switch-test31: one check for every boss. Runs on every frame of the
+        // zone 1 boss (host, 1725 frames) and Mark's zone 2 boss replay, never
+        // in 8903 frames of stages, menus, cards or special stages.
+        {0, 0x023353C8u, 2, "boss", -2},
         {1, 0x022CF661u, 8, "logos", -2},
         {1, 0x022D4539u, 9, "title", -2},
         {1, 0x022D7C05u, 10, "main menu", -2},
@@ -1070,21 +1134,21 @@ int srnx_code_frame() {
     int scene = 0;
     for (const Sig& g : sigs)
         if (g.idx >= 0 && g_nr_ovstamp[g.ov][g.idx] == s) { scene = g.scene; break; }
-    // switch-test29: a stage's act title card (zone name above, "Ready?" and
-    // the character below: one picture across both screens). Its task
-    // (overlay 0 0x023470A0) runs from the card's first frame until "Go!" has
-    // gone; the stage's own update (overlay 0 0x0233D588) starts as the card
-    // fades out and then runs every other frame, so the card ends at the
-    // first frame it runs and stays ended while the card task lasts (host
-    // trace, zone 2 act 1 as Sonic, 2026-11-19).
+    // switch-test31: the cards inside a stage (act start, after a death, boss
+    // intro): one picture across both screens. In a stage or boss arena
+    // (overlay 0 0x02346AA8 runs) the game's play code (overlay 0 0x0234D5B8)
+    // runs on every frame of play (2866 of 2866: stages and both bosses) and
+    // on no card frame (1172: act card, two boss cards, Mark's respawn card).
+    // test29/30 used a card-drawing function that also runs in a boss fight
+    // whenever Sonic is on the ground. Switches on the first frame (the boss
+    // check also runs during the boss card, so waiting flashed the boss layout).
     {
-        static int card = -2, play = -2;
-        static bool played = false;
-        if (card == -2) { card = ovfn_index(0, 0x023470A0u); play = ovfn_index(0, 0x0233D588u); }
-        const bool card_ran = card >= 0 && g_nr_ovstamp[0][card] == s;
-        if (!card_ran) played = false;
-        else if (play >= 0 && g_nr_ovstamp[0][play] == s) played = true;
-        if (!scene && card_ran && !played) scene = 14;
+        static int ctx = -2, play = -2, streak = 0;
+        if (ctx == -2) { ctx = ovfn_index(0, 0x02346AA8u); play = ovfn_index(0, 0x0234D5B8u); }
+        const bool in_stage = ctx >= 0 && g_nr_ovstamp[0][ctx] == s;
+        const bool playing = play >= 0 && g_nr_ovstamp[0][play] == s;
+        streak = (in_stage && !playing) ? streak + 1 : 0;
+        if (streak >= 1 && (scene == 0 || scene == 2)) scene = 14;
     }
     // switch-test30: the emerald result's code (0x02306A20) does not run on
     // every frame while the special stage's code still does, so test29
@@ -1213,18 +1277,8 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
     // the game's own code decides first; the pixel checks below only cover
     // screens that have no code signature yet
     int want = code_scene;
-    // switch-test28: only two pixel checks remain, for screens without a code
-    // signature yet: a boss (only the zone 1 boss has one) and the pre-boss
-    // cutscene. Everything else is the game's code or the shrunk fallback.
-    if (!want) {
-        // boss: the health panel on the bottom screen (red emblem, grey panel)
-        int red = 0, grey = 0;
-        for (int y = 90; y < 120; ++y)
-            for (int x = 23; x < 42; ++x) { const uint32_t c = bottom[y * 256 + x] & 0xFFFFFFu; red += c == 0xB20000u || c == 0xFB0000u; }
-        for (int y = 60; y < 64; ++y)
-            for (int x = 14; x < 120; ++x) grey += (bottom[y * 256 + x] & 0xFFFFFFu) == 0x516961u;
-        if (red >= 150 && grey >= 100) want = 2;
-    }
+    // switch-test31: one pixel check remains, for the pre-boss cutscene.
+    // Everything else is the game's code or the shrunk fallback.
     // a black bottom screen under a lit top (the pre-boss cutscene: the main
     // engine drives the black bottom there, the story is on top)
     if (!want && frac(bottom, 0, 192, 4, is_black) > 0.85f && frac(top, 0, 192, 4, is_black) < 0.6f) want = 3;

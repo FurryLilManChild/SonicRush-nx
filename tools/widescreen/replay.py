@@ -51,8 +51,14 @@ def main():
         img = Image.new('RGB', (vw, vh))
         img.putdata([(e6(p & 63), e6((p >> 8) & 63), e6((p >> 16) & 63)) if (p >> 24) & 31 else (0, 0, 0) for p in px])
         img.save(f'{out}/{i:03d}-3d.png')
+        m = struct.unpack_from('<I', spr, 6656)[0]   # switch-test31: register writes by scanline
+        if 0 < m < 128:
+            with open(f'{out}/{i:03d}-lines.txt', 'w') as fh:
+                for k in range(m):
+                    a, v = struct.unpack_from('<II', spr, 6660 + 8 * k)
+                    fh.write('line %3d %08X <- %08X (%d bytes)\n' % (a & 0xFFFF, 0x04000000 | ((a >> 16) & 0x1FFF), v, a >> 29))
         n = struct.unpack_from('<I', spr, 6144)[0]   # switch-test30: functions in stage frames too
-        if 0 < n < 384:
+        if 0 < n < 128:
             fns = struct.unpack_from('<%dI' % n, spr, 6148)
             with open(f'{out}/{i:03d}-fns.txt', 'w') as fh:
                 fh.write('\n'.join('ov%02d %08X' % (1 if a >> 31 else 0, a & 0x7FFFFFFF) for a in fns) + '\n')

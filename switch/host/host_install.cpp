@@ -362,6 +362,15 @@ void wide_vblank() {
     }
 }
 void round_hook(uint64_t cyc) {
+    {   // switch-test31: NR_WIDE=1 builds the stage view once a frame (the
+        // hook that used to do this was lost), for the NR_SHOT exit check
+        static uint64_t wnext = 0;
+        if (g_srnx_wide && cyc >= wnext) {
+            wnext = cyc + 1120380ull; wide_vblank();
+            static bool lastw = false;
+            if (g_wide_have != lastw) { lastw = g_wide_have; std::fprintf(stderr, "[srnx] host stage view %s at %.0fM\n", lastw ? "on" : "off", cyc / 1e6); }
+        }
+    }
     // switch-test27 host check: NR_CODESCENE=1 runs the Switch's per-frame
     // screen identification once a frame (560190 system cycles = 1120380 ARM9
     // cycles) and logs each change

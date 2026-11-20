@@ -44,6 +44,7 @@ struct SrnxWideParams {
     uint32_t out_pitch;            // GPU output row length in pixels (set by the presenter)
     uint32_t off_v3d;              // view-size 3D layer drawn by our own projection (v3d_valid)
     uint32_t v3d_valid;
+    int32_t bg1_dsx, bg1_dsy;      // switch-test31: the DS screen's own far background scroll
 };
 
 constexpr uint32_t kSrnxBgVram = 512 * 1024, kSrnxObjVram = 256 * 1024;

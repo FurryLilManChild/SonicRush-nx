@@ -1,5 +1,6 @@
 // SonicRush-nx switch-test16: instant replay (see srnx_replay.h).
 #include "srnx_replay.h"
+extern "C" { extern uint32_t g_srnx_linelog_last[254]; extern int g_srnx_linelog_last_n; }
 
 #include "srnx_wide_render.h"
 
@@ -89,9 +90,14 @@ void srnx_replay_record(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     std::memcpy(f.spr.data() + kSprBytes - 512, data + p.off_spr + kSrnxAffOff, 512);
     {   // switch-test30: overlay functions that ran this frame, in the gap
         // between the sprite records (384 x 16 bytes) and the affine table
-        const uint32_t n = (uint32_t)std::min<int>(g_srnx_codelist_n, 383);
+        const uint32_t n = (uint32_t)std::min<int>(g_srnx_codelist_n, 127);
         std::memcpy(f.spr.data() + 6144, &n, 4);
         std::memcpy(f.spr.data() + 6148, g_srnx_codelist, n * 4);
+        // switch-test31: the last full frame's 2D/DMA register writes with
+        // their scanlines (io.cpp), at 6656: u32 count, then pairs
+        const uint32_t m = (uint32_t)std::min(g_srnx_linelog_last_n, 127);
+        std::memcpy(f.spr.data() + 6656, &m, 4);
+        std::memcpy(f.spr.data() + 6660, g_srnx_linelog_last, m * 8);
     }
     std::memcpy(f.obj.data(), data + p.off_obj, kSrnxObjVram);
 }

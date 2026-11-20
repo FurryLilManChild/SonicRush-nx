@@ -1,5 +1,15 @@
 # Progress log (newest first)
 
+## 2026-11-19: switch-test31
+
+- test30 result (Mark): title cards fine; zone 2 boss stacked whenever Sonic was on the ground; respawn showed the lines; zone 2 backgrounds (city cut off and repeating, sky underwater, water line).
+- Boss stacking: cause, from rpl-003's function lists and Mark's description: the test29/30 card marker (0x023470A0) is not card-only; in the zone 2 boss it runs whenever Sonic is on the ground, and the card check came before the boss check. Replaced.
+- One boss check for all bosses: overlay 0 0x023353C8 runs on every frame of the zone 1 boss (host, 1725 frames) and Mark's zone 2 boss (120), never in 8903 frames of stages, menus, cards, special stages. Zone 1 marker and the boss pixel check removed.
+- Cards (act start, respawn, boss intro): in a stage (0x02346AA8 runs) without the play code (0x0234D5B8, 2866 of 2866 play frames, 0 of 1172 card frames). Host: act 1 card and boss cards switch exactly. Risk: the pause menu may count as a card.
+- Far background: zone 2 BG1 is 512x512 but only the DS screen's part is kept current, hence the cut and repeat. Now the DS screen's BG1 rows are scaled evenly to the view width, bottom anchored, bilinear (fill_bg1_scaled); fast and reference drawing identical, 1.5-1.9 ms. Scroll speed is not matched (would need the stale columns): about 1.66x the DS on screen. Expected to also remove the sky underwater (no rows outside the DS screen any more); not reproduced on the host.
+- Water line: no mid-frame 2D register writes or HBlank DMA in host underwater and above-water frames, and no full-screen 3D quad in one underwater frame. Cause not found. Stage replays now carry the last frame's 2D/DMA register writes with scanlines (spr offset 6656; replay.py NNN-lines.txt).
+- Host: NR_WIDE=1 builds the stage view each frame again (the hook was lost); NR_RAMDUMP writes .wide.
+
 ## 2026-11-19: switch-test30
 
 - test29 result (Mark): act title cards still wrong; special stage 2 has robots to tap (homing attack); zone 2 backgrounds glitch (sky where it should not be, bad stretching).
