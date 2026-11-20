@@ -1,5 +1,14 @@
 # Progress log (newest first)
 
+## 2026-11-19: switch-test30
+
+- test29 result (Mark): act title cards still wrong; special stage 2 has robots to tap (homing attack); zone 2 backgrounds glitch (sky where it should not be, bad stretching).
+- Act title card: test29 identified the card (host) but the frontend only chose special layouts when no stage view was live, and the card shows while the stage view is live. My host check stopped at the identification and never reached the layout choice. Now a code-identified in-stage screen (14, and 15 for act clear once it has a signature) wins over the stage view.
+- Emerald result: the layout swapped between result and special stage every frame or two for about 4 s at the end of special stage 2 (log 19:28, t=294-298 s); the result's code does not run every frame. Latched until the special stage code stops.
+- Replays: stage frames now carry the overlay function list too (spr block offset 6144), so an L3 at the act clear screen gives its signature. replay.py writes NNN-fns.txt for them.
+- Zone 2 background lead (not a cause): rpl-002 frame 60, the DS screens show sky and city through arches, the stage view draws a wall there. Not investigated yet.
+- Act clear (rpl-003, "ACT1 CLEAR"): shown as the stage view in test29. No signature yet: a blind host playthrough of act 1 did not reach it.
+
 ## 2026-11-19: switch-test29
 
 - Zone 2 freeze (test28, after the act title card): an interrupt taken twice in one IntrWait overwrote the wait's saved state with the handler's; the game resumed at 0x0200007C in IRQ mode and stopped. Fixed in swi_intr_wait (commit 3de3bd8). Host, Mark's save: Water Palace act 1 plays, timer runs.

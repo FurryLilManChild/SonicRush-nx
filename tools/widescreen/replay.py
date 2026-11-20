@@ -51,6 +51,11 @@ def main():
         img = Image.new('RGB', (vw, vh))
         img.putdata([(e6(p & 63), e6((p >> 8) & 63), e6((p >> 16) & 63)) if (p >> 24) & 31 else (0, 0, 0) for p in px])
         img.save(f'{out}/{i:03d}-3d.png')
+        n = struct.unpack_from('<I', spr, 6144)[0]   # switch-test30: functions in stage frames too
+        if 0 < n < 384:
+            fns = struct.unpack_from('<%dI' % n, spr, 6148)
+            with open(f'{out}/{i:03d}-fns.txt', 'w') as fh:
+                fh.write('\n'.join('ov%02d %08X' % (1 if a >> 31 else 0, a & 0x7FFFFFFF) for a in fns) + '\n')
         with open(f'{out}/{i:03d}-spr.txt', 'w') as t:
             t.write(f'serial {serial} world {wx},{wy} main {mx},{my} dispcnt {dispcnt:08X} own3d {v3d}\n')
             for k in range(min(nspr + nhud, 384)):

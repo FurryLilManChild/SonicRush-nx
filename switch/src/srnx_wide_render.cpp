@@ -1086,6 +1086,17 @@ int srnx_code_frame() {
         else if (play >= 0 && g_nr_ovstamp[0][play] == s) played = true;
         if (!scene && card_ran && !played) scene = 14;
     }
+    // switch-test30: the emerald result's code (0x02306A20) does not run on
+    // every frame while the special stage's code still does, so test29
+    // swapped the two layouts every frame or two for about 4 seconds (Mark's
+    // log 2026-11-19 19:28, special stage 2). Once the result starts it stays
+    // until the special stage's code stops too.
+    {
+        static bool result = false;
+        if (scene == 6) result = true;
+        else if (scene == 1 && result) scene = 6;
+        else result = false;
+    }
     ++g_nr_ovserial;
     return scene;
 }

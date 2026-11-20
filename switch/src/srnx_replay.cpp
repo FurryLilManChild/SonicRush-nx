@@ -87,6 +87,12 @@ void srnx_replay_record(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     std::memset(f.spr.data(), 0, kSprBytes);
     std::memcpy(f.spr.data(), data + p.off_spr, n * 16);
     std::memcpy(f.spr.data() + kSprBytes - 512, data + p.off_spr + kSrnxAffOff, 512);
+    {   // switch-test30: overlay functions that ran this frame, in the gap
+        // between the sprite records (384 x 16 bytes) and the affine table
+        const uint32_t n = (uint32_t)std::min<int>(g_srnx_codelist_n, 383);
+        std::memcpy(f.spr.data() + 6144, &n, 4);
+        std::memcpy(f.spr.data() + 6148, g_srnx_codelist, n * 4);
+    }
     std::memcpy(f.obj.data(), data + p.off_obj, kSrnxObjVram);
 }
 
