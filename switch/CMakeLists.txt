@@ -193,8 +193,16 @@ nx_generate_nacp(
     AUTHOR "FurryLilManChild"
     VERSION "${MPHNX_VERSION}")
 
-# 0.5.0: original hbmenu icon (lock-on reticle; no game artwork).
+# hbmenu icon: the repo's original icon, or a private one from SRNX_ICON (a
+# path outside the repo, never committed; switch-test35: Mark's Sonic Rush
+# art for his own test builds).
+set(SRNX_ICON_FILE "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.jpg")
+set(SRNX_ICON "" CACHE STRING "private hbmenu icon (path outside the repo)")
+if(SRNX_ICON AND EXISTS "${SRNX_ICON}")
+    set(SRNX_ICON_FILE "${SRNX_ICON}")
+endif()
+message(STATUS "hbmenu icon: ${SRNX_ICON_FILE}")
 nx_create_nro(nds_runner
     OUTPUT "${CMAKE_BINARY_DIR}/${MPHNX_APP_NAME}.nro"
-    ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.jpg"
+    ICON "${SRNX_ICON_FILE}"
     NACP "${CMAKE_BINARY_DIR}/${MPHNX_APP_NAME}.nacp")

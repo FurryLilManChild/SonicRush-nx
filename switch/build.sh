@@ -77,7 +77,10 @@ cp "$HERE"/stubs/*.c "$GEN"/
 say "5/6 Switch configure and build"
 COMPAT="$HERE/compat"
 INC="$COMPAT;/opt/devkitpro/libnx/include;/opt/devkitpro/portlibs/switch/include"
-"$DKRUN" "cmake -S '$HERE' -B '$BUILD_DIR/switch' -G Ninja \
+# private hbmenu icon (never in the repo): SRNX_ICON, or the default private path
+ICON="${SRNX_ICON:-/home/claude/private/icon/icon.jpg}"
+[ -f "$ICON" ] || ICON=""
+"$DKRUN" "cmake -S '$HERE' -B '$BUILD_DIR/switch' -G Ninja -DSRNX_ICON='$ICON' \
   -DCMAKE_TOOLCHAIN_FILE=/opt/devkitpro/cmake/Switch.cmake \
   -DCMAKE_BUILD_TYPE=Release \
   -DMPHNX_VERSION='$VERSION' \

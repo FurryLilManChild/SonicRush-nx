@@ -1,5 +1,9 @@
 # Progress log (newest first)
 
+## 2026-11-20: queued for the next build
+
+- hbmenu icon: Mark's Sonic Rush art (2026-11-20). Kept outside the repo at /home/claude/private/icon/icon.jpg (256x256, never committed); build.sh passes it to CMake as SRNX_ICON when present, otherwise the repo's original icon is used. A public release needs an original icon instead (official art in a public GPL release).
+
 ## 2026-11-20: switch-test34
 
 - test33 result (Mark, Leaf Forest): the background glide panned the wrong way (sky ended up below the forest while falling) and was too quick, still felt like a pop.
