@@ -78,3 +78,7 @@ if (srnx_home_pending()) { r0 = 1u; goto L_02310218; }
 # the robot found (or 0), stored as the homing target
 @ov01:023122A0
 srnx_home_done(r0);
+# switch-test37: a special stage started from the level select ends on the
+# world map (main 0x02054FD4) instead of resuming an act that never ran.
+@ov01:0230BC84
+if (srnx_special_end()) { r14 = 0x0230BC98u; NR_STORE(); N_02054FD4_a(0); if (nr_redirect) return; NR_LOAD(); goto L_0230BC98; }

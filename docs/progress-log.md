@@ -1,5 +1,11 @@
 # Progress log (newest first)
 
+## 2026-11-21: switch-test37
+
+- test36 result (Mark): robot homing works, number prompts still work, no banner mid-stage. After a level-select special stage the result screen ended in a white screen that stayed (log: game running, no overlay code, vblank waits only). Reproduced on the host.
+- Cause (game code, host and log agree): entering from an act, the game sets bit 0x40 of 0x022C4578 (ov00 0x02343EC8) before the scene switch; the special stage's end (ov01 0x0230BC70) tests it and calls the scene stub 0x02055194 (overlay 0, 0x0204D7E0) to resume the act at the place saved on the way in. The level select skips the act, so the bit was clear and nothing followed. Setting the bit (host) brought zone 2 act 1 back with Sonic at 1,0, off the map. Fix: a level-select special stage ends on the world map (hook ov01 0x0230BC84 calls main 0x02054FD4, the world map stub the act and the main menu use). Host: special stage 2, robots, end, world map.
+- Emerald result layout back, from Mark's result capture (rpl-001, 120 frames): 11 overlay 1 functions run in every result frame and in none of rpl-001/rpl-002 of test35 (240 frames) or about 12000 host frames (world map, menus, intro, play with robot homing, a failed finish). One (0x02307148) is a spawn helper, so the layout needs 6 of the 11 in a frame. Host special stage 2 run: never triggered. The real result screen is checked only by Mark's capture (no win on the host).
+
 ## 2026-11-21: switch-test36
 
 - test35 result (Mark): level select into special stages works. Special stage 2: the robots need taps (homing attack) and the port had no way to do it; the "SPECIAL STAGE" banner (emerald result layout) came back mid-stage.

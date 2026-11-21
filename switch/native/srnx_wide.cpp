@@ -22,6 +22,7 @@
 
 extern "C" {
 uint32_t bus_read_u32_slow(uint32_t addr);
+void bus_write_u32_slow(uint32_t addr, uint32_t val);
 }
 
 namespace {
@@ -107,9 +108,27 @@ int g_srnx_stage_started = 0;   // a stage start since the world map (srnx_code_
 // which the stage start (0x0205247C) has just written. srnx.hooks @020524BC
 // calls that stub instead of the act start when this returns 1.
 static int s_sp_pending = 0;
+// switch-test37: what follows the special stage. Entered from an act, the
+// game sets bit 0x40 of 0x022C4578 (ov00 0x02343EC8) and the special stage's
+// end (ov01 0x0230BC70) then calls the scene stub 0x02055194 (overlay 0,
+// 0x0204D7E0), which resumes the act at the place saved on the way in. The
+// level select skips the act, so nothing was saved (host with the bit set:
+// zone 2 act 1 came back with Sonic at 1,0, off the map) and without the bit
+// nothing follows the result screen at all (test36: white screen). A special
+// stage started from the level select goes back to the world map instead
+// (srnx.hooks @ov01:0230BC84 calls the world map stub main 0x02054FD4, the
+// one the act and the main menu use).
+static int s_sp_from_lvl = 0;
+extern "C" int srnx_special_end(void) {
+    if (!s_sp_from_lvl) return 0;
+    s_sp_from_lvl = 0;
+    std::fprintf(stderr, "[srnx] special stage over: back to the world map\n");
+    return 1;
+}
 extern "C" int srnx_special_take(void) {
     if (!s_sp_pending) return 0;
     s_sp_pending = 0;
+    s_sp_from_lvl = 1;
     std::fprintf(stderr, "[srnx] level select: special stage %d\n", (int)(bus_read_u32_slow(0x022C457Cu) & 0xFFu) + 1);
     return 1;
 }
@@ -118,6 +137,7 @@ extern "C" int srnx_lvl_take(uint32_t* zone, uint32_t* act) {
     std::fprintf(stderr, "[srnx] stage start: zone %u act %u%s\n", (unsigned)*zone + 1, (unsigned)*act + 1,
                  g_srnx_lvl_armed ? " (level select replaces it)" : "");
     s_sp_pending = 0;
+    s_sp_from_lvl = 0;   // a special stage quit early leaves it set
     if (!g_srnx_lvl_armed) return 0;
     g_srnx_lvl_armed = 0;
     *zone = (uint32_t)g_srnx_lvl_zone;

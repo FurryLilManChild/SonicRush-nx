@@ -1190,6 +1190,21 @@ int srnx_code_frame() {
     int scene = 0;
     for (const Sig& g : sigs)
         if (g.idx >= 0 && g_nr_ovstamp[g.ov][g.idx] == s) { scene = g.scene; break; }
+    {   // switch-test37: emerald result. Eleven overlay 1 functions run in
+        // every frame of Mark's result capture (rpl-001, 2026-11-21, 120
+        // frames) and in no frame of his special stage recordings (number
+        // prompts, robots: 240 frames) or of the host runs (world map, menus,
+        // special stage intro and play, a failed finish: about 12000 frames).
+        // One of them (0x02307148) is a spawn helper, so a single function is
+        // not trusted: the result layout needs at least 6 of the 11 in a frame.
+        static const uint32_t kResult[] = {0x02307148u, 0x02307778u, 0x02307890u, 0x02307AD0u, 0x02307B44u, 0x02307D30u,
+                                           0x0230CF1Cu, 0x0230EA6Cu, 0x0230EE44u, 0x02310F80u, 0x02311E64u};
+        static int idx[11]; static bool ri = false;
+        if (!ri) { ri = true; for (int i = 0; i < 11; ++i) idx[i] = ovfn_index(1, kResult[i]); }
+        int hits = 0;
+        for (int i = 0; i < 11; ++i) hits += idx[i] >= 0 && g_nr_ovstamp[1][idx[i]] == s;
+        if (hits >= 6) scene = 6;
+    }
     // switch-test31: the cards inside a stage (act start, after a death, boss
     // intro): one picture across both screens. In a stage or boss arena
     // (overlay 0 0x02346AA8 runs) the game's play code (overlay 0 0x0234D5B8)
