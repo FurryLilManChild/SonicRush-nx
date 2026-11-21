@@ -323,26 +323,43 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
         // the old slice at the jump and glide to the new one (about half a
         // second, easing out).
         {
-            static int last_x = 0, last_y = 0, off_x = 0, off_y = 0;
+            static int last_x = 0, last_y = 0, off_x = 0, off_y = 0, last_my = 0;
             static bool have_last = false;
-            const int rx = (int)L.bg1x, ry = oy + cam0y;
+            const int rx = (int)L.bg1x, ry = oy + cam0y, my = cam0y - wy;
             auto wrapd = [](int d) { d %= 512; if (d > 256) d -= 512; if (d < -256) d += 512; return d; };
+            bool glide_restart = false;
             if (have_last) {
-                const int jx = wrapd(rx - last_x), jy = wrapd(ry - last_y);
-                if (std::abs(jy) > 24) off_y -= jy;
-                if (std::abs(jx) > 24) off_x -= jx;
+                const int jx = wrapd(rx - last_x);
+                int jy = wrapd(ry - last_y);
+                // switch-test34: the screens are 272 rows apart, so a move to
+                // the lower screen reads as -240 after wrapping at 512 and the
+                // glide panned the wrong way (Mark, rpl-013: sky below the
+                // forest). The main screen's move in the view (my) gives the
+                // real direction.
+                const int dm = my - last_my;
+                if (dm > 100 && jy < -24) jy += 512;
+                else if (dm < -100 && jy > 24) jy -= 512;
+                if (std::abs(jy) > 24) { off_y -= jy; glide_restart = true; }
+                if (std::abs(jx) > 24) { off_x -= jx; glide_restart = true; }
                 if (std::abs(jy) > 24 || std::abs(jx) > 24) {
                     static int nlog = 0;
                     if (nlog++ < 40) std::fprintf(stderr, "[srnx] far background slice jump %d,%d at %lluM: gliding\n", jx, jy, g_runtime_cycles / 1000000ull);
                 }
             }
-            have_last = true; last_x = rx; last_y = ry;
-            auto ease = [](int& o) {
-                if (!o) return;
-                const int step = std::max(1, std::abs(o) / 12);
-                o += o > 0 ? -std::min(step, o) : std::min(step, -o);
-            };
-            ease(off_x); ease(off_y);
+            have_last = true; last_x = rx; last_y = ry; last_my = my;
+            // switch-test34: a fixed 1.25 s glide that starts and ends gently
+            // (smoothstep). test33 moved 1/12 of the remaining distance a frame,
+            // which put most of the move in the first few frames and still
+            // felt like a pop (Mark).
+            static int gx0 = 0, gy0 = 0, gt = 0;
+            constexpr int kGlideFrames = 75;
+            if (glide_restart) { gx0 = off_x; gy0 = off_y; gt = 0; }
+            if (gt < kGlideFrames) {
+                ++gt;
+                const float t = (float)gt / kGlideFrames, k = 1.0f - t * t * (3.0f - 2.0f * t);
+                off_x = (int)std::lround(gx0 * k);
+                off_y = (int)std::lround(gy0 * k);
+            } else { off_x = off_y = 0; }
             p.bg1_dsx = rx + off_x;
             p.bg1_dsy = ry + off_y;
         }

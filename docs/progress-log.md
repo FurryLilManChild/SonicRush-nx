@@ -1,5 +1,11 @@
 # Progress log (newest first)
 
+## 2026-11-20: switch-test34
+
+- test33 result (Mark, Leaf Forest): the background glide panned the wrong way (sky ended up below the forest while falling) and was too quick, still felt like a pop.
+- Direction: every logged jump was exactly 240 rows. The two screens are 272 rows apart in the far background and the map wraps at 512, so the move to the lower screen read as -240 and the glide took that path (rpl-013 frames 71-100: forest entering from the top). The main screen's move in the view now sets the direction (down: +272).
+- Speed: fixed 75 frames (1.25 s) with smoothstep instead of 1/12 of the remainder per frame. A new jump mid-glide restarts from the current position.
+
 ## 2026-11-20: switch-test33
 
 - test32 result (Mark): backgrounds much improved, but they change suddenly at times. rpl-011: the far background flips from sky to deep forest at frame 93, the frame the main DS screen's place in the view jumps (-127 to +130: the game moved Sonic to the other screen). The scaled far layer takes the main screen's BG1 rows, and the two screens show different slices.
