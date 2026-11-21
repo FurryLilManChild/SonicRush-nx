@@ -60,3 +60,11 @@ void srnx_wide_cam_swapped(void);
 extern "C"
 #endif
 int srnx_lvl_take(uint32_t* zone, uint32_t* act);
+// level select stage 3: start the zone's special stage (srnx.hooks @020524BC)
+#ifdef __cplusplus
+extern "C" {
+#endif
+int srnx_special_take(void);
+#ifdef __cplusplus
+}
+#endif

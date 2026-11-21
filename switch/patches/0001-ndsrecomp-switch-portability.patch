@@ -499,7 +499,7 @@ index 022a1af..8c31a75 100644
  #endif
      if (supported) {
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 7d9d4eb..3c66d10 100644
+index 7d9d4eb..88d326c 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
 @@ -4,6 +4,7 @@
@@ -563,7 +563,7 @@ index 7d9d4eb..3c66d10 100644
  namespace {
  // Written per presented frame by the frontend loop, read from the same
  // thread by the `frontend_stats` debug command at the debug_pump() safe
-@@ -215,6 +244,109 @@ void observe_top_black_bands(const uint32_t* pixels, uint64_t frame,
+@@ -215,7 +244,111 @@ void observe_top_black_bands(const uint32_t* pixels, uint64_t frame,
  #include "recomp_runtime_ui.h"
  
  #include "frontend_latency.h"
@@ -671,9 +671,11 @@ index 7d9d4eb..3c66d10 100644
 +void nds_gpu2d_cow_stats(uint64_t* pages, uint64_t* fallbacks, uint64_t* page_mask);
 +#endif
  
++extern int g_srnx_lvl_zone, g_srnx_lvl_act, g_srnx_lvl_armed;
  namespace {
  
-@@ -768,6 +900,93 @@ void SDLCALL audio_stream_underrun_callback(void* userdata,
+ #if defined(NDS_HAVE_SDL3)
+@@ -768,6 +901,93 @@ void SDLCALL audio_stream_underrun_callback(void* userdata,
  #else
  using NdsAudioDevice = SDL_AudioDeviceID;
  
@@ -767,7 +769,7 @@ index 7d9d4eb..3c66d10 100644
  void SDLCALL audio_callback(void* userdata, Uint8* stream, int len) {
      // SDL owns this thread, so it cannot be registered at creation; it
      // registers itself the first time it runs instead. One thread_local test
-@@ -782,6 +1001,9 @@ void SDLCALL audio_callback(void* userdata, Uint8* stream, int len) {
+@@ -782,6 +1002,9 @@ void SDLCALL audio_callback(void* userdata, Uint8* stream, int len) {
      std::memset(stream, 0, static_cast<size_t>(len));
      if (!queue || len <= 0) return;
      const uint32_t requested = static_cast<uint32_t>(len) / kAudioFrameBytes;
@@ -777,7 +779,7 @@ index 7d9d4eb..3c66d10 100644
      const uint32_t take = std::min(requested, queue->count);
      auto* output = reinterpret_cast<int16_t*>(stream);
      const uint32_t first = std::min(take, kAudioCapacityFrames - queue->read);
-@@ -815,6 +1037,12 @@ bool sdl_init_frontend() {
+@@ -815,6 +1038,12 @@ bool sdl_init_frontend() {
      return SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS |
                      SDL_INIT_GAMECONTROLLER);
  #else
@@ -790,7 +792,7 @@ index 7d9d4eb..3c66d10 100644
      return SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS |
                      SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) == 0;
  #endif
-@@ -1006,10 +1234,34 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
+@@ -1006,10 +1235,34 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
                       bool throttle, uint32_t pace_floor, bool& queue_error,
                       const std::vector<int16_t>* owned_pcm = nullptr) {
      if (!device) return 0;
@@ -827,7 +829,7 @@ index 7d9d4eb..3c66d10 100644
              ? static_cast<uint32_t>(std::min<size_t>(1024,(owned_pcm->size()-pcm_offset)/2u))
              : nds_spu_read_output(samples.data(), 1024);
          if (!frames) break;
-@@ -1017,45 +1269,69 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
+@@ -1017,45 +1270,69 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
              std::copy_n(owned_pcm->data()+pcm_offset,frames*2u,samples.data());
              pcm_offset+=frames*2u;
          }
@@ -932,7 +934,7 @@ index 7d9d4eb..3c66d10 100644
      }
      // Audio is the host's real-time clock. Never drop a produced block: if the
      // emulator is faster than the DS cadence, let SDL consume the backlog
-@@ -1066,7 +1342,7 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
+@@ -1066,7 +1343,7 @@ uint32_t drain_audio(const NdsAudioDevice& device, AudioQueue& queue,
      // down while the emulator is running behind, so a slow stretch spends the
      // buffered runway instead of having it slept away.
      uint32_t queued = audio_queue_count(device, queue);
@@ -941,7 +943,7 @@ index 7d9d4eb..3c66d10 100644
          // Spend existing audio pacing slack preparing qualified native code.
          // Guest CPUs remain paused; under load/no slack demand execution wins.
          if (!nds_arm9_native_prepare_idle(1000)) SDL_Delay(1);
-@@ -1185,6 +1461,239 @@ constexpr const char* kRuntimeMouseSensitivityKey =
+@@ -1185,6 +1462,238 @@ constexpr const char* kRuntimeMouseSensitivityKey =
  constexpr const char* kRuntimeResumeKey = "system.resume";
  constexpr const char* kRuntimeQuitKey = "system.quit";
  
@@ -951,9 +953,8 @@ index 7d9d4eb..3c66d10 100644
 +#if defined(SRNX)
 +#if defined(SRNX)
 +// switch-test35: level select (switch/native/srnx_wide.cpp)
-+extern int g_srnx_lvl_zone, g_srnx_lvl_act, g_srnx_lvl_armed;
 +static const char* const kSrnxLvlZoneNames[7] = {"Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7"};
-+static const char* const kSrnxLvlActNames[3] = {"Act 1", "Act 2", "Boss"};
++static const char* const kSrnxLvlActNames[4] = {"Act 1", "Act 2", "Boss", "Special stage"};
 +#endif
 +int g_nx_layout = kNxWide;     // SonicRush-nx: one wide view in stages, the column elsewhere
 +constexpr int kNxLayoutCount = 5;
@@ -1235,7 +1236,7 @@ index 7d9d4eb..3c66d10 100644
 +        return 1;
 +    }
 +    if (std::strcmp(item->key, "nx.lvl.act") == 0) {
-+        if (value < 0 || value > 2) return 0;
++        if (value < 0 || value > 3) return 0;
 +        g_srnx_lvl_act = value;
 +        return 1;
 +    }
@@ -2095,7 +2096,7 @@ index 7d9d4eb..3c66d10 100644
 +        RECOMP_RUNTIME_UI_CHOICE, 0, 6, 1, kSrnxLvlZoneNames, 7, nullptr});
 +    nx_menu_items.push_back({"nx.lvl.act", "Level select", "Stage",
 +        "Act 1, Act 2 or the zone's boss.",
-+        RECOMP_RUNTIME_UI_CHOICE, 0, 2, 1, kSrnxLvlActNames, 3, nullptr});
++        RECOMP_RUNTIME_UI_CHOICE, 0, 3, 1, kSrnxLvlActNames, 4, nullptr});
 +    nx_menu_items.push_back({"nx.lvl.go", "Level select", "Go (pick any act next)",
 +        "Closes the menu. The next act you start from the world map (any zone, any act) starts the zone and stage chosen above instead, as the character you are playing.",
 +        RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, nullptr, 0, nullptr});

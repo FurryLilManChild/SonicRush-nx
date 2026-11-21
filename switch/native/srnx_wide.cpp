@@ -99,16 +99,32 @@ int g_srnx_wide = 0;
 // switch-test35: level select (port menu). armed: 1 = replace the next stage start
 int g_srnx_lvl_zone = 0, g_srnx_lvl_act = 0, g_srnx_lvl_armed = 0;
 int g_srnx_stage_started = 0;   // a stage start since the world map (srnx_code_frame)
+// switch-test35: level select stage 3 = special stage. The game starts a
+// special stage through the scene stub main 0x02055108 (ldr ip 0x0203051C,
+// r0 = 1 (overlay 1), r1 = 0x0230C9F4, bx ip; reached from the act overlay's
+// veneer at ov00 0x0234CFBC after a Special Generator launch). The entry
+// 0x0230C9F4 takes the special stage number from the zone byte 0x022C457C,
+// which the stage start (0x0205247C) has just written. srnx.hooks @020524BC
+// calls that stub instead of the act start when this returns 1.
+static int s_sp_pending = 0;
+extern "C" int srnx_special_take(void) {
+    if (!s_sp_pending) return 0;
+    s_sp_pending = 0;
+    std::fprintf(stderr, "[srnx] level select: special stage %d\n", (int)(bus_read_u32_slow(0x022C457Cu) & 0xFFu) + 1);
+    return 1;
+}
 extern "C" int srnx_lvl_take(uint32_t* zone, uint32_t* act) {
     g_srnx_stage_started = 1;
     std::fprintf(stderr, "[srnx] stage start: zone %u act %u%s\n", (unsigned)*zone + 1, (unsigned)*act + 1,
                  g_srnx_lvl_armed ? " (level select replaces it)" : "");
+    s_sp_pending = 0;
     if (!g_srnx_lvl_armed) return 0;
     g_srnx_lvl_armed = 0;
     *zone = (uint32_t)g_srnx_lvl_zone;
-    *act = (uint32_t)g_srnx_lvl_act;
+    *act = (uint32_t)(g_srnx_lvl_act == 3 ? 0 : g_srnx_lvl_act);
+    if (g_srnx_lvl_act == 3) s_sp_pending = 1;
     std::fprintf(stderr, "[srnx] level select: zone %d %s\n", g_srnx_lvl_zone + 1,
-                 g_srnx_lvl_act == 2 ? "boss" : g_srnx_lvl_act ? "act 2" : "act 1");
+                 g_srnx_lvl_act == 3 ? "special stage" : g_srnx_lvl_act == 2 ? "boss" : g_srnx_lvl_act ? "act 2" : "act 1");
     return 1;
 }
 int g_srnx_wide_l = 284, g_srnx_wide_r = 285, g_srnx_wide_t = 0, g_srnx_wide_b = 272;

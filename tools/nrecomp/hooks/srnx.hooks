@@ -60,3 +60,10 @@ srnx_wide_cam_swapped();
 # boss (0x0204888C). The port menu's armed choice replaces them here.
 @0205247C
 { uint32_t _z = r0, _a = r1; if (srnx_lvl_take(&_z, &_a)) { r0 = _z; r1 = _a; } }
+# switch-test35: level select "Special stage": instead of the act start
+# (blx 0x02055178), the special stage scene stub main 0x02055108 (r0 = 1,
+# r1 = 0x0230C9F4, ip = 0x0203051C). The stage number is the zone byte
+# 0x022C457C just written by this function.
+@020524BC
+if (srnx_special_take()) { r0 = 1u; r1 = 0x0230C9F4u; r12 = 0x0203051Cu; r14 = 0x020524C1u; NR_STORE();
+  N_0203051C_a(0); if (nr_redirect) return; NR_LOAD(); goto L_020524C0; }
