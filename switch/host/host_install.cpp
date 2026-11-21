@@ -1,5 +1,6 @@
 #include <chrono>
 int srnx_code_frame();
+extern int g_srnx_lvl_zone, g_srnx_lvl_act, g_srnx_lvl_armed;
 extern uint32_t g_srnx_codelist[];
 extern int g_srnx_codelist_n;   // srnx_wide_render.cpp (file scope: the hooks below sit in an anonymous namespace)
 // SonicRush-nx host boot test (from MPH-nx): install the native ARM9 engine before upstream
@@ -362,6 +363,15 @@ void wide_vblank() {
     }
 }
 void round_hook(uint64_t cyc) {
+    {   // switch-test35: NR_LVL=zone,act (1-based zone; act 1, 2, 3 = boss) arms the level select
+        static bool done = false;
+        if (!done) { done = true;
+            if (const char* e = std::getenv("NR_LVL")) {
+                int z = 0, a = 0;
+                if (std::sscanf(e, "%d,%d", &z, &a) == 2) { g_srnx_lvl_zone = z - 1; g_srnx_lvl_act = a - 1; g_srnx_lvl_armed = 1; }
+            }
+        }
+    }
     {   // switch-test31: NR_WIDE=1 builds the stage view once a frame (the
         // hook that used to do this was lost), for the NR_SHOT exit check
         static uint64_t wnext = 0;

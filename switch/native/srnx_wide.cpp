@@ -96,6 +96,21 @@ int srnx_is_hud_caller(int routine, uint32_t lr, uint32_t lr_multi) {
     return 0;
 }
 int g_srnx_wide = 0;
+// switch-test35: level select (port menu). armed: 1 = replace the next stage start
+int g_srnx_lvl_zone = 0, g_srnx_lvl_act = 0, g_srnx_lvl_armed = 0;
+int g_srnx_stage_started = 0;   // a stage start since the world map (srnx_code_frame)
+extern "C" int srnx_lvl_take(uint32_t* zone, uint32_t* act) {
+    g_srnx_stage_started = 1;
+    std::fprintf(stderr, "[srnx] stage start: zone %u act %u%s\n", (unsigned)*zone + 1, (unsigned)*act + 1,
+                 g_srnx_lvl_armed ? " (level select replaces it)" : "");
+    if (!g_srnx_lvl_armed) return 0;
+    g_srnx_lvl_armed = 0;
+    *zone = (uint32_t)g_srnx_lvl_zone;
+    *act = (uint32_t)g_srnx_lvl_act;
+    std::fprintf(stderr, "[srnx] level select: zone %d %s\n", g_srnx_lvl_zone + 1,
+                 g_srnx_lvl_act == 2 ? "boss" : g_srnx_lvl_act ? "act 2" : "act 1");
+    return 1;
+}
 int g_srnx_wide_l = 284, g_srnx_wide_r = 285, g_srnx_wide_t = 0, g_srnx_wide_b = 272;
 uint32_t g_srnx_spr_overflow = 0;
 int g_srnx_act_l = 0, g_srnx_act_r = 0, g_srnx_act_t = 0, g_srnx_act_b = 0;

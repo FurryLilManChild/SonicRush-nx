@@ -54,3 +54,9 @@ if (g_srnx_wide) r2 += (uint32_t)g_srnx_keep_margin;
 # 3D geometry from here on is built for the other screen
 @ov00:0233B600
 srnx_wide_cam_swapped();
+# switch-test35: level select. Every stage start goes through main 0x0205247C
+# (Thumb; r0 zone 0..6, r1 act: 0 act 1, 1 act 2, 2 boss), called by the act
+# select after its fade; it stores both and starts an act (0x02055178) or a
+# boss (0x0204888C). The port menu's armed choice replaces them here.
+@0205247C
+{ uint32_t _z = r0, _a = r1; if (srnx_lvl_take(&_z, &_a)) { r0 = _z; r1 = _a; } }

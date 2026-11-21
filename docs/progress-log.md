@@ -1,5 +1,15 @@
 # Progress log (newest first)
 
+## 2026-11-20: switch-test35
+
+- test34 result (Mark): backgrounds great in zones 1 and 2; pause fine; special stage "SPECIAL STAGE" banner came back mid-stage and blocked the circle taps until a pause; world map dialogue on the wrong screen; zone 3 sky below buildings; water line unchanged. Asked for a level select.
+- Special stage banner: log 22:01 shows "emerald result" mid special stage (143 s, 248 s, 262 s); the test30 latch then held the result layout until the stage code stopped (a pause). Now the result layout needs the result code on 6 of the last 16 frames.
+- Level select: every stage start goes through main 0x0205247C (Thumb; r0 zone 0..6, r1 0 act 1, 1 act 2, 2 boss; stores them at 0x022C457C/D, then 0x02055178 for acts or 0x0204888C for bosses). The stage table at 0x020745A8 (8 bytes per stage, 3 per zone: z11 z12 z13 ... z73, then z81 z82 zf3 z91 z92) confirms the numbering. A hook there replaces the zone and act with the port menu's armed choice (Level select: Zone, Stage, Go). Host: armed zone 3 boss, picked zone 2 act 1, the zone 3 boss loaded and the boss check held (third boss). Special stages are not in it: their entry path is not traced yet.
+- World map dialogue: the cutscene code (0x02060E8D) also runs world map dialogues (rpl-017, dialogue on the bottom screen). A cutscene with no stage start since the world map now gets the world map layout; the pre-boss cutscene (after a stage start) keeps the top screen (host). World map case not reproduced on the host.
+- Zone 3 backgrounds: host zone 3 act 1 (via the level select): each DS screen itself shows the far layer as a dark interior wall above a band of sky with obelisks, and the scaled view shows the same. Not changed; asking Mark whether the view should differ from the DS here.
+- Water line: rpl-015's register log has no mid-frame 2D register writes; DMA3 feeds the 3D geometry FIFO (0x04000400) through the frame. Lead: the water is drawn by the 3D engine. Not investigated further.
+- Host: NR_LVL=zone,act arms the level select.
+
 ## 2026-11-20: queued for the next build
 
 - hbmenu icon: Mark's Sonic Rush art (2026-11-20). Kept outside the repo at /home/claude/private/icon/icon.jpg (256x256, never committed); build.sh passes it to CMake as SRNX_ICON when present, otherwise the repo's original icon is used. A public release needs an original icon instead (official art in a public GPL release).

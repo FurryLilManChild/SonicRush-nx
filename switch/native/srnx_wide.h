@@ -53,3 +53,10 @@ void srnx_alloc_report(void);
 extern "C"
 #endif
 void srnx_wide_cam_swapped(void);
+// switch-test35: level select. The port menu arms a zone and act; the next
+// time the game starts a stage (main 0x0205247C: r0 zone 0..6, r1 act 0, 1,
+// 2 = boss) it starts the armed one instead. Returns 1 when it replaced them.
+#ifdef __cplusplus
+extern "C"
+#endif
+int srnx_lvl_take(uint32_t* zone, uint32_t* act);

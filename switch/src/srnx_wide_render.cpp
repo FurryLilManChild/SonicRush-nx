@@ -1202,6 +1202,16 @@ int srnx_code_frame() {
         streak = (in_stage && !playing) ? streak + 1 : 0;
         if (streak >= 1 && (scene == 0 || scene == 2)) scene = 14;
     }
+    {   // switch-test35: the same dialogue code also runs on the world map,
+        // where the dialogue and the map are on the bottom screen (Mark's
+        // rpl-017, 2026-11-20). A cutscene with no stage start since the world
+        // map (main 0x0205247C, srnx_lvl_take) is a world map dialogue and gets
+        // the world map layout; one after a stage start (the pre-boss
+        // cutscene) keeps the top screen.
+        extern int g_srnx_stage_started;
+        if (scene == 11) g_srnx_stage_started = 0;
+        if (scene == 3 && !g_srnx_stage_started) scene = 11;
+    }
     {   // switch-test33: the cutscene's closing fade runs no cutscene code and
         // no overlay code either; keep the cutscene layout through it
         static int last = 0;
@@ -1213,11 +1223,23 @@ int srnx_code_frame() {
     // swapped the two layouts every frame or two for about 4 seconds (Mark's
     // log 2026-11-19 19:28, special stage 2). Once the result starts it stays
     // until the special stage's code stops too.
+    // switch-test35: the result's code also runs for a moment in the middle
+    // of a stage (Mark's log 2026-11-20 22:01: "emerald result" at 143 s, 248 s
+    // and 262 s of special stages), and the latch then held the result layout
+    // (banner across the top, no circle taps) until a pause stopped the stage
+    // code. The result layout now needs the result code on at least 6 of the
+    // last 16 frames; the special stage layout stays until then.
     {
+        static uint16_t hist = 0;
         static bool result = false;
-        if (scene == 6) result = true;
-        else if (scene == 1 && result) scene = 6;
-        else result = false;
+        hist = (uint16_t)((hist << 1) | (scene == 6 ? 1 : 0));
+        int runs = 0;
+        for (uint16_t h = hist; h; h &= h - 1) ++runs;
+        if (scene == 6 || scene == 1) {
+            if (runs >= 6) result = true;
+            if (result) scene = 6;
+            else if (scene == 6) scene = 1;   // not settled yet: keep the stage layout
+        } else result = false;
     }
     ++g_nr_ovserial;
     return scene;
