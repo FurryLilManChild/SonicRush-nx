@@ -118,7 +118,28 @@ static int s_sp_pending = 0;
 // stage started from the level select goes back to the world map instead
 // (srnx.hooks @ov01:0230BC84 calls the world map stub main 0x02054FD4, the
 // one the act and the main menu use).
-static int s_sp_from_lvl = 0;
+static int s_sp_from_lvl = 0, s_sp_award = 0;
+// switch-test38: the emerald. The special stage's teardown (ov01 0x0230C104)
+// sets the stage's bit in the working emerald mask, halfword 0x022C4588 (game
+// state +0x28), when it was won (0x0230C204..0x0230C224). The act code copies
+// the saved mask (save record byte 0x022C468F, read by main 0x02059874) back
+// over it when it starts (ov00 0x0234D02C), and the world map panel shows the
+// saved byte (host: 0x7F there shows all seven). Coming from an act, the act
+// commits it; from the level select nothing did (Mark, test37: no emerald on
+// the world map). So for a level-select special stage the won bit also goes
+// into the saved byte, and the game's own save routine (main 0x0205A4EC, as
+// ov01 0x023002B4 and ov00 0x0234D054 call it) writes the save.
+extern "C" int srnx_special_emerald(uint32_t mask) {
+    if (!s_sp_award) return 0;
+    s_sp_award = 0;
+    const uint32_t w = bus_read_u32_slow(0x022C468Cu);
+    const uint32_t old = (w >> 24) & 0xFFu, now = old | (mask & 0x7Fu);
+    if (now == old) { std::fprintf(stderr, "[srnx] level select special stage: no new emerald (mask %02X)\n", mask & 0x7Fu); return 0; }
+    bus_write_u32_slow(0x022C468Cu, (w & 0x00FFFFFFu) | (now << 24));
+    std::fprintf(stderr, "[srnx] level select special stage: emerald saved (mask %02X -> %02X)\n", old, now);
+    return 1;
+}
+extern "C" int srnx_host_force_win(void) { return std::getenv("NR_SPWIN") != nullptr; }
 extern "C" int srnx_special_end(void) {
     if (!s_sp_from_lvl) return 0;
     s_sp_from_lvl = 0;
@@ -128,7 +149,12 @@ extern "C" int srnx_special_end(void) {
 extern "C" int srnx_special_take(void) {
     if (!s_sp_pending) return 0;
     s_sp_pending = 0;
-    s_sp_from_lvl = 1;
+    if (std::getenv("NR_SPRESUME")) {   // host test: the game's own act-return path (Sonic's place is not saved)
+        bus_write_u32_slow(0x022C4578u, bus_read_u32_slow(0x022C4578u) | 0x40u);
+    } else {
+        s_sp_from_lvl = 1;
+        s_sp_award = 1;   // its teardown may award the emerald (it can run before the end check)
+    }
     std::fprintf(stderr, "[srnx] level select: special stage %d\n", (int)(bus_read_u32_slow(0x022C457Cu) & 0xFFu) + 1);
     return 1;
 }
@@ -138,6 +164,7 @@ extern "C" int srnx_lvl_take(uint32_t* zone, uint32_t* act) {
                  g_srnx_lvl_armed ? " (level select replaces it)" : "");
     s_sp_pending = 0;
     s_sp_from_lvl = 0;   // a special stage quit early leaves it set
+    s_sp_award = 0;
     if (!g_srnx_lvl_armed) return 0;
     g_srnx_lvl_armed = 0;
     *zone = (uint32_t)g_srnx_lvl_zone;

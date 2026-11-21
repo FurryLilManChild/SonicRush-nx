@@ -381,7 +381,27 @@ extern "C" void nr_resume_arm9(void) {
 // ---------------------------------------------------------------------------
 // Coverage log: the first few hundred distinct addresses that ran on the
 // interpreter. The next build adds them as native entry points.
+// switch-test38: a call to an address outside RAM (test37: after a death in
+// zone 3 act 1 the game called 0xBBBBBBBA and stepped through junk at 1.7 fps).
+// The first one logs who made it (lr, registers, the top of the stack) and asks
+// the frontend for a replay capture (g_srnx_wild_call).
+extern "C" { int g_srnx_wild_call = 0; }
+static void note_wild(uint32_t key) {
+    static int logged = 0;
+    if (logged >= 4) return;
+    ++logged;
+    std::fprintf(stderr, "[native] wild call to %08X: lr %08X sp %08X r0 %08X r1 %08X r2 %08X r3 %08X r4 %08X r5 %08X r6 %08X r7 %08X\n",
+                 key, g_cpu.R[14], g_cpu.R[13], g_cpu.R[0], g_cpu.R[1], g_cpu.R[2], g_cpu.R[3], g_cpu.R[4], g_cpu.R[5], g_cpu.R[6], g_cpu.R[7]);
+    std::fprintf(stderr, "[native]   stack:");
+    for (int i = 0; i < 16; ++i) std::fprintf(stderr, " %08X", bus_read_u32_slow(g_cpu.R[13] + 4u * (uint32_t)i));
+    std::fprintf(stderr, "\n");
+    if (!g_srnx_wild_call) g_srnx_wild_call = 1;
+}
 static void note_miss(uint32_t key, bool call = false) {
+    {   const uint32_t a = key & ~1u;
+        const bool ram = (a >= 0x02000000u && a < 0x02400000u) || (a >= 0x01000000u && a < 0x01008000u) || a >= 0xFFFF0000u;
+        if (call && !ram) note_wild(a);
+    }
     static uint32_t seen[2048]; static uint32_t n = 0;
     for (uint32_t i = 0; i < n; ++i) if (seen[i] == key) return;
     if (n < 2048) seen[n++] = key;

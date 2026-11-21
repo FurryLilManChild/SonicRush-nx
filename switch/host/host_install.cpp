@@ -222,6 +222,19 @@ void play_hook(uint64_t cyc) {
     static long long dump_at = -2;
     if (dump_at == -2) { const char* e = std::getenv("NR_DUMP_AT"); dump_at = e ? std::atoll(e) * 1000000ll : -1; }
     if (dump_at >= 0 && (long long)cyc >= dump_at) { dump_words(std::getenv("NR_DUMP")); dump_at = -1; }
+    {   // NR_KILLAT=Mcyc: one-shot, drop the player (pointer ov00 0x0236AC60) 4096 px down, a pit death
+        static long long kill_at = -2;
+        if (kill_at == -2) { const char* e = std::getenv("NR_KILLAT"); kill_at = e ? std::atoll(e) * 1000000ll : -1; }
+        if (kill_at >= 0 && (long long)cyc >= kill_at) {
+            const uint32_t p = bus_read_u32_slow(0x0236AC60u);
+            if (p >= 0x02080000u && p < 0x02300000u) {
+                const uint32_t y = bus_read_u32_slow(p + 0x14u) + (4096u << 8);
+                bus_write_u16_slow(p + 0x14u, (uint16_t)y); bus_write_u16_slow(p + 0x16u, (uint16_t)(y >> 16));
+                std::fprintf(stderr, "[host] NR_KILLAT: player %08X dropped\n", p);
+            }
+            kill_at = -1;
+        }
+    }
     if (cyc >= g_poke_from)
         for (const auto& pk : g_pokes)
             if ((bus_read_u32_slow(pk.first & ~3u) >> ((pk.first & 2u) * 8u) & 0xFFFFu) != pk.second)

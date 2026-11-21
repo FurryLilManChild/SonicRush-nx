@@ -1,5 +1,11 @@
 # Progress log (newest first)
 
+## 2026-11-21: switch-test38
+
+- test37 result (Mark): world map after level-select special stages works, results layout correct, robots and prompts fine. The emerald won from a level-select special stage was not on the world map. After a generator special stage in zone 3 act 1 and about 90 s of play, a death led to the respawn card, then calls into 0xBBBBBBBA and onward (unmapped reads at 0xBBB9xxxx), 1.7 fps, white screen. Not reproduced on the host (deaths in zone 2 and 3 act 1, and after an act resume, respawn fine); cause unknown.
+- Emerald: the special stage teardown (ov01 0x0230C104) sets the won stage's bit in the working mask 0x022C4588 (0x0230C204..0x0230C224). The saved mask is save record byte 0x022C468F (main 0x02059874 reads it; the act copies it over the working mask at ov00 0x0234D02C; the world map panel shows it, host: 0x7F there shows seven). A level-select special stage now also puts the bit in 0x022C468F and calls the game's save routine main 0x0205A4EC (as ov01 0x023002B4 does). Host (NR_SPWIN forces the win): special stage 4, mask 03 -> 0B, the save file's record byte 0x1B went 3 -> 11 in both copies, world map shows the third emerald.
+- Diagnostics: a call outside RAM logs lr, r0-r7 and 16 stack words (first 4), and saves a replay once.
+
 ## 2026-11-21: switch-test37
 
 - test36 result (Mark): robot homing works, number prompts still work, no banner mid-stage. After a level-select special stage the result screen ended in a white screen that stayed (log: game running, no overlay code, vblank waits only). Reproduced on the host.

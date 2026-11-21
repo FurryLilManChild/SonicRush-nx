@@ -82,3 +82,11 @@ srnx_home_done(r0);
 # world map (main 0x02054FD4) instead of resuming an act that never ran.
 @ov01:0230BC84
 if (srnx_special_end()) { r14 = 0x0230BC98u; NR_STORE(); N_02054FD4_a(0); if (nr_redirect) return; NR_LOAD(); goto L_0230BC98; }
+# switch-test38: a level-select special stage that was won also stores its
+# emerald in the save record and saves (main 0x0205A4EC), as the act would.
+@ov01:0230C224
+if (srnx_special_emerald(r1)) { uint32_t s0 = r0, s1 = r1, s2 = r2, s3 = r3, s12 = r12; r0 = 0u; r14 = 0x0230C228u; NR_STORE();
+  N_0205A4EC_a(0); if (nr_redirect) return; NR_LOAD(); r0 = s0; r1 = s1; r2 = s2; r3 = s3; r12 = s12; }
+# host test only (NR_SPWIN): count the special stage as won
+@ov01:0230C208
+if (srnx_host_force_win()) r0 = 1u;

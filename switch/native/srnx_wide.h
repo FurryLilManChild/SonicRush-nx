@@ -66,6 +66,8 @@ extern "C" {
 #endif
 int srnx_special_take(void);
 int srnx_special_end(void);
+int srnx_special_emerald(uint32_t mask);
+int srnx_host_force_win(void);
 // special stage robot homing (A or B), srnx.hooks @ov01:0231227C/02310214/023122A0
 void srnx_home_request(void);
 int srnx_home_pending(void);
