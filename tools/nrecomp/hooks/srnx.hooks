@@ -67,3 +67,14 @@ srnx_wide_cam_swapped();
 @020524BC
 if (srnx_special_take()) { r0 = 1u; r1 = 0x0230C9F4u; r12 = 0x0203051Cu; r14 = 0x020524C1u; NR_STORE();
   N_0203051C_a(0); if (nr_redirect) return; NR_LOAD(); goto L_020524C0; }
+# switch-test36: special stage robot homing (srnx_home_request on A/B).
+# 0x02312258 checks the touch record's new-tap bit (0x40) here: report a tap.
+@ov01:0231227C
+if (srnx_home_pending()) r0 |= 0x40u;
+# 0x02310174: the tap-against-robot test for a robot that passed the game's
+# own checks; while a homing request is pending, that robot counts as hit.
+@ov01:02310214
+if (srnx_home_pending()) { r0 = 1u; goto L_02310218; }
+# the robot found (or 0), stored as the homing target
+@ov01:023122A0
+srnx_home_done(r0);

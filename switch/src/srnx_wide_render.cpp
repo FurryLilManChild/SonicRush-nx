@@ -1142,7 +1142,11 @@ int srnx_code_frame() {
     // host traces; the rest: test27 replays, 2026-11-19)
     struct Sig { int ov; uint32_t addr; int scene; const char* name; int idx; };
     static Sig sigs[] = {
-        {1, 0x02306A20u, 6, "emerald result", -2},
+        // switch-test36: no emerald result entry. 0x02306A20 (the test29
+        // "emerald result" signature) is robot code: it runs in every frame of
+        // rpl-002 (2026-11-21) that shows Eggman's robots and in none of
+        // rpl-001 (no robots), which is why the result layout came up mid-stage.
+        // The special stage keeps its layout through its result screen.
         {1, 0x0230B594u, 5, "special stage intro", -2},
         {1, 0x0230C0A4u, 1, "special stage", -2},
         {1, 0x022E2AF9u, 11, "world map", -2},
@@ -1218,29 +1222,7 @@ int srnx_code_frame() {
         if (scene == 0 && last == 3 && n_ov == 0) scene = 3;
         last = scene;
     }
-    // switch-test30: the emerald result's code (0x02306A20) does not run on
-    // every frame while the special stage's code still does, so test29
-    // swapped the two layouts every frame or two for about 4 seconds (Mark's
-    // log 2026-11-19 19:28, special stage 2). Once the result starts it stays
-    // until the special stage's code stops too.
-    // switch-test35: the result's code also runs for a moment in the middle
-    // of a stage (Mark's log 2026-11-20 22:01: "emerald result" at 143 s, 248 s
-    // and 262 s of special stages), and the latch then held the result layout
-    // (banner across the top, no circle taps) until a pause stopped the stage
-    // code. The result layout now needs the result code on at least 6 of the
-    // last 16 frames; the special stage layout stays until then.
-    {
-        static uint16_t hist = 0;
-        static bool result = false;
-        hist = (uint16_t)((hist << 1) | (scene == 6 ? 1 : 0));
-        int runs = 0;
-        for (uint16_t h = hist; h; h &= h - 1) ++runs;
-        if (scene == 6 || scene == 1) {
-            if (runs >= 6) result = true;
-            if (result) scene = 6;
-            else if (scene == 6) scene = 1;   // not settled yet: keep the stage layout
-        } else result = false;
-    }
+    srnx_home_tick();
     ++g_nr_ovserial;
     return scene;
 }

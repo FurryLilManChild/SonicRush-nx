@@ -127,6 +127,28 @@ extern "C" int srnx_lvl_take(uint32_t* zone, uint32_t* act) {
                  g_srnx_lvl_act == 3 ? "special stage" : g_srnx_lvl_act == 2 ? "boss" : g_srnx_lvl_act ? "act 2" : "act 1");
     return 1;
 }
+// switch-test36: robot homing in special stages. The game homes Sonic onto
+// a robot when a new tap (touch flags bit 0x40, touch record 0x022B65B4)
+// lands on one: ov01 0x02312258 (only while player+0x114 allows it) calls
+// 0x02310174, which walks the robots, keeps the ones its own checks allow
+// (flags, 0x02310248 distance window), projects each to the bottom screen and
+// tests the tap against it (0x0230AE34); a hit sets player state 0x12. A press
+// of A or B (no number prompt up) asks for a homing attack: for up to 12
+// frames srnx.hooks reports a new tap and treats the first robot that passes
+// the game's own checks as hit. srnx_home_done ends the request.
+static int s_home_frames = 0;
+extern "C" void srnx_home_request(void) {
+    s_home_frames = 12;
+    std::fprintf(stderr, "[srnx] homing attack requested\n");
+}
+extern "C" int srnx_home_pending(void) { return s_home_frames > 0; }
+extern "C" void srnx_home_tick(void) { if (s_home_frames > 0) --s_home_frames; }
+extern "C" void srnx_home_done(uint32_t robot) {
+    if (s_home_frames > 0 && robot) {
+        std::fprintf(stderr, "[srnx] homing attack on robot %08X\n", robot);
+        s_home_frames = 0;
+    }
+}
 int g_srnx_wide_l = 284, g_srnx_wide_r = 285, g_srnx_wide_t = 0, g_srnx_wide_b = 272;
 uint32_t g_srnx_spr_overflow = 0;
 int g_srnx_act_l = 0, g_srnx_act_r = 0, g_srnx_act_t = 0, g_srnx_act_b = 0;

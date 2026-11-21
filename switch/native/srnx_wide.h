@@ -65,6 +65,11 @@ int srnx_lvl_take(uint32_t* zone, uint32_t* act);
 extern "C" {
 #endif
 int srnx_special_take(void);
+// special stage robot homing (A or B), srnx.hooks @ov01:0231227C/02310214/023122A0
+void srnx_home_request(void);
+int srnx_home_pending(void);
+void srnx_home_tick(void);
+void srnx_home_done(uint32_t robot);
 #ifdef __cplusplus
 }
 #endif

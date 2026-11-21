@@ -512,11 +512,10 @@ int main(int argc, char** argv) {
     // buttons by Xbox position: Switch A arrives as "Pad B", X as "Pad Y").
     // Order: Up, Down, Left, Right, A, B, X, Y, L, R, Start, Select (button+1).
     add("--gamepad-bindings"); add("12,13,14,15,2,1,4,3,10,11,7,0");
-    // Special stages and touch prompts: right stick moves a stylus on the
-    // bottom screen, ZR holds it down, right stick press taps.
-    add("--virtual-stylus"); add("on");
-    add("--virtual-stylus-pad-hold-bind"); add("Pad RT");
-    add("--virtual-stylus-pad-tap-bind"); add("Pad R3");
+    // switch-test36: no virtual stylus. Special stages steer with the left
+    // stick and tap with A/B (frontend.cpp, SRNX); the old right-stick stylus
+    // (ZR hold, R3 tap) was a leftover stopgap.
+    add("--virtual-stylus"); add("off");
     add("--save-path"); add(app + "/sonicrush.sav");
     add("--savestate-dir"); add(app + "/states");   // native19: save states (per ROM SHA-1 below)
     add("--firmware-state-path"); add(app + "/firmware-state.bin");

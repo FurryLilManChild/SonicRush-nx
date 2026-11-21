@@ -1,5 +1,13 @@
 # Progress log (newest first)
 
+## 2026-11-21: switch-test36
+
+- test35 result (Mark): level select into special stages works. Special stage 2: the robots need taps (homing attack) and the port had no way to do it; the "SPECIAL STAGE" banner (emerald result layout) came back mid-stage.
+- Emerald result layout removed. Its signature 0x02306A20 is robot code: it runs in every frame of rpl-002 that shows Eggman's robots and in no frame of rpl-001 (no robots). The special stage keeps its layout through the result screen; no new result trigger until one is proven against recordings.
+- Robot homing: the game's tap check is ov01 0x02312258 (player+0x114 allows it; touch record 0x022B65B4, new-tap bit 0x40 at +0x10, tap point +8/+0xA), which calls 0x02310174: walk the robots, skip by flags and the 0x02310248 distance window, project to the bottom screen, test the tap (0x0230AE34). A hit sets player state 0x12. Now A or B with no number prompt up asks for a homing attack: hooks report a new tap and count the first robot that passes the game's own checks as hit (12 frames at most). Host (special stage 2, A presses at 6640-6960M): three homing attacks, robots 021876B8, 02187964, 0218824C, explosions on screen.
+- The leftover right-stick virtual stylus (ZR hold, R3 tap) is off.
+- Host: NR_INPUT accepts TOUCHx.y (held touch); A presses request homing.
+
 ## 2026-11-20: switch-test35
 
 - test34 result (Mark): backgrounds great in zones 1 and 2; pause fine; special stage "SPECIAL STAGE" banner came back mid-stage and blocked the circle taps until a pause; world map dialogue on the wrong screen; zone 3 sky below buildings; water line unchanged. Asked for a level select.

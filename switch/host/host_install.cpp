@@ -35,6 +35,7 @@ extern int g_srnx_act_extra, g_srnx_act_off;   // srnx_wide_render.cpp   // srnx
 extern void (*g_nx_host_round_hook)(uint64_t arm9_cycles);
 
 void nds_set_key_mask(uint32_t mask);   // io.cpp
+void nds_set_touch(uint16_t x, uint16_t y, bool down);   // io.cpp
 const uint8_t* nds_vram_oam_live();     // vram.cpp
 uint32_t nds_vram_read_bg(int engine, uint32_t addr, uint32_t width);
 uint32_t nds_vram_read_obj(int engine, uint32_t addr, uint32_t width);
@@ -160,7 +161,7 @@ StateStep parse_step(const char* v) {
 //                               with '|' from A B X Y L R START SELECT UP DOWN
 //                               LEFT RIGHT (e.g. "3500+40:START,4200+600:RIGHT|A")
 //   NR_SHOTS="prefix@a,b,c"     screenshots prefix-<a>.ppm ... at a, b, c million cycles
-struct Press { unsigned long long at, end; uint32_t bits; };
+struct Press { unsigned long long at, end; uint32_t bits; int tx = -1, ty = -1; };   // TOUCHx.y: a held touch
 std::vector<Press> g_presses;
 std::string g_shot_prefix;
 std::vector<unsigned long long> g_shots;
@@ -188,7 +189,10 @@ void parse_input(const char* v) {
             std::string ks = it.substr(colon + 1); size_t a = 0;
             while (a <= ks.size()) {
                 size_t b = ks.find('|', a); if (b == std::string::npos) b = ks.size();
-                pr.bits |= key_bit(ks.substr(a, b - a)); a = b + 1;
+                const std::string kk = ks.substr(a, b - a);
+                if (kk.rfind("TOUCH", 0) == 0) std::sscanf(kk.c_str() + 5, "%d.%d", &pr.tx, &pr.ty);
+                else pr.bits |= key_bit(kk);
+                a = b + 1;
             }
             g_presses.push_back(pr);
         }
@@ -330,8 +334,17 @@ void play_hook(uint64_t cyc) {
     }
     if (!g_presses.empty()) {
         uint32_t held = 0;
-        for (const Press& pr : g_presses) if (cyc >= pr.at && cyc < pr.end) held |= pr.bits;
+        int tx = -1, ty = -1;
+        for (const Press& pr : g_presses) if (cyc >= pr.at && cyc < pr.end) { held |= pr.bits; if (pr.tx >= 0) { tx = pr.tx; ty = pr.ty; } }
+        static bool touching = false;
+        if (tx >= 0) { nds_set_touch((uint16_t)tx, (uint16_t)ty, true); touching = true; }
+        else if (touching) { nds_set_touch(0, 0, false); touching = false; }
         const uint32_t mask = 0x000303FFu & ~held;
+        {   // switch-test36: A presses ask for a robot homing attack (as on the Switch)
+            static bool a_was = false; const bool a = held & 1u;
+            if (a && !a_was) srnx_home_request();
+            a_was = a;
+        }
         if (mask != g_last_mask) {
             nds_set_key_mask(mask);
             std::fprintf(stderr, "[input] %llu Mcyc keys %05X\n", (unsigned long long)(cyc / 1000000ull), held);
