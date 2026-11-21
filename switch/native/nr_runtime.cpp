@@ -64,6 +64,7 @@ enum { NR_STAT_SERVICE, NR_STAT_YIELD, NR_STAT_IRQ, NR_STAT_DYN, NR_STAT_DYN_MIS
 static uint32_t g_ov_lo = 0xFFFFFFFFu, g_ov_hi = 0;
 static int g_ov_resident[64];          // per overlay: 1 resident, 0 not, -1 unknown
 static uint32_t g_ov_dirty = 1;
+static uint32_t g_sw_lo = 0x0236ACA0u, g_sw_hi = 0x0236AE00u;   // switch-test39 write watch; host: NR_SWATCH=lo-hi
 #ifdef NR_CALLTRACE
 static uint32_t g_nr_cur_fn = 0, g_nr_cur_lr = 0, g_watch_lo = 0, g_watch_hi = 0;   // host debug (NR_WATCH)
 #endif
@@ -204,6 +205,12 @@ extern "C" void nr_remap(void) {
     // resident overlay set stale (an overlay load is a store into this range).
     for (uint32_t a = g_ov_lo & ~0xFFFu; a < g_ov_hi; a += 4096u)
         if (a - 0x02000000u < 0x01000000u) nr_wr_tab[a >> 12] = 0;
+    // switch-test39: the zone 3 death object (0x0236ACA0) is watched always
+    if (const char* e = std::getenv("NR_SWATCH")) {
+        g_sw_lo = (uint32_t)std::strtoul(e, nullptr, 16);
+        const char* d = std::strchr(e, '-'); g_sw_hi = d ? (uint32_t)std::strtoul(d + 1, nullptr, 16) : g_sw_lo + 0x100u;
+    }
+    for (uint32_t a = g_sw_lo & ~0xFFFu; a < g_sw_hi; a += 4096u) nr_wr_tab[a >> 12] = 0;
 #ifdef NR_CALLTRACE
     if (const char* w = std::getenv("NR_WATCH")) {
         g_watch_lo = (uint32_t)std::strtoul(w, nullptr, 16);
@@ -216,6 +223,48 @@ extern "C" void nr_remap(void) {
 }
 
 uint32_t g_nr_ovstamp[3][8192];
+uint32_t g_nr_lastfn = 0;
+// switch-test39: write watch on 0x0236ACA0..0x0236AE00. test37/38: after a
+// death in zone 3 act 1 the task loop (main 0x02036E70) ran the object update
+// main 0x0206C3D0 on an object at 0x0236ACA0 (just past the act overlay's
+// bss) whose callback (+0x6C) read 0xBBBBBBBB. Every CPU store (the page is off
+// the fast table, so stores come through nr_io_wr*) and DMA write into the
+// range goes into a ring; a store to the callback is logged at once; the ring
+// is printed with the object on a wild call.
+extern "C" const uint32_t nr_ovfn_00[], nr_ovfn_01[], nr_ovfn_02[];
+struct SrnxWatchRec { uint32_t addr, val, fn, frame; uint8_t width, kind; uint32_t extra; };
+static SrnxWatchRec g_srnx_wring[128]; static unsigned g_srnx_wn = 0;
+static uint32_t lastfn_addr() {
+    const uint32_t g = g_nr_lastfn >> 16, i = g_nr_lastfn & 0xFFFFu;
+    return g == 0 ? nr_ovfn_00[i] : g == 1 ? nr_ovfn_01[i] : nr_ovfn_02[i];
+}
+extern "C" void srnx_watch_write(uint32_t a, uint32_t v, int width, int kind, uint32_t extra) {
+    if (a + (uint32_t)width <= g_sw_lo || a >= g_sw_hi) return;
+    const uint32_t fn = kind == 0 ? lastfn_addr() : 0;
+    SrnxWatchRec& r = g_srnx_wring[g_srnx_wn++ & 127u];
+    r.addr = a; r.val = v; r.fn = fn; r.frame = g_nr_ovserial; r.width = (uint8_t)width; r.kind = (uint8_t)kind; r.extra = extra;
+    static unsigned cb = 0;
+    const uint32_t cba = g_sw_lo + 0x6Cu;
+    if (a <= cba && a + (uint32_t)width > cba && cb < 40) {
+        ++cb;
+        std::fprintf(stderr, "[watch] callback +6C <- %08X (%s, width %d, fn %08X lr %08X, extra %08X, frame %u)\n", v,
+                     kind == 0 ? "cpu" : kind == 1 ? "dma" : "other", width, fn, g_cpu.R[14], extra, g_nr_ovserial);
+    }
+}
+static void srnx_watch_dump();
+void srnx_watch_dump_ext() { srnx_watch_dump(); }
+static void srnx_watch_dump() {
+    std::fprintf(stderr, "[watch] last writes into %08X..%08X (oldest first, %u total):\n", g_sw_lo, g_sw_hi, g_srnx_wn);
+    const unsigned n = g_srnx_wn < 128u ? g_srnx_wn : 128u;
+    for (unsigned k = 0; k < n; ++k) {
+        const SrnxWatchRec& r = g_srnx_wring[(g_srnx_wn - n + k) & 127u];
+        std::fprintf(stderr, "[watch]   frame %u %s w%u %08X = %08X fn %08X extra %08X\n", r.frame,
+                     r.kind == 0 ? "cpu" : r.kind == 1 ? "dma" : "other", r.width, r.addr, r.val, r.fn, r.extra);
+    }
+    std::fprintf(stderr, "[watch] object %08X:", g_sw_lo);
+    for (uint32_t o = 0; o < 0x100u; o += 4) std::fprintf(stderr, "%s%08X", (o % 32u) ? " " : "\n[watch]   ", bus_read_u32_slow(g_sw_lo + o));
+    std::fprintf(stderr, "\n");
+}
 uint32_t g_nr_ovserial = 1;
 
 extern "C" uint32_t nr_io_rd32(uint32_t a) { ++g_nr_stats[NR_STAT_IO]; return bus_read_u32_slow(a); }
@@ -258,9 +307,9 @@ static inline void io_stall_check_at(uint32_t a) {
     while (nds_dma_cpu_stalled(0)) { nr_yield(); g_nds_unwinding = 0; }
 }
 #define io_stall_check() io_stall_check_at(a)
-extern "C" void nr_io_wr32(uint32_t a, uint32_t v) { ++g_nr_stats[NR_STAT_IO]; note_store(a); watch_store(a, v, 4); bus_write_u32_slow(a, v); io_stall_check(); }
-extern "C" void nr_io_wr16(uint32_t a, uint32_t v) { ++g_nr_stats[NR_STAT_IO]; note_store(a); watch_store(a, v, 2); bus_write_u16_slow(a, (uint16_t)v); io_stall_check(); }
-extern "C" void nr_io_wr8(uint32_t a, uint32_t v) { ++g_nr_stats[NR_STAT_IO]; note_store(a); watch_store(a, v, 1); bus_write_u8_slow(a, (uint8_t)v); io_stall_check(); }
+extern "C" void nr_io_wr32(uint32_t a, uint32_t v) { ++g_nr_stats[NR_STAT_IO]; note_store(a); srnx_watch_write(a, v, 4, 0, 0); watch_store(a, v, 4); bus_write_u32_slow(a, v); io_stall_check(); }
+extern "C" void nr_io_wr16(uint32_t a, uint32_t v) { ++g_nr_stats[NR_STAT_IO]; note_store(a); srnx_watch_write(a, v, 2, 0, 0); watch_store(a, v, 2); bus_write_u16_slow(a, (uint16_t)v); io_stall_check(); }
+extern "C" void nr_io_wr8(uint32_t a, uint32_t v) { ++g_nr_stats[NR_STAT_IO]; note_store(a); srnx_watch_write(a, v, 1, 0, 0); watch_store(a, v, 1); bus_write_u8_slow(a, (uint8_t)v); io_stall_check(); }
 
 // ---------------------------------------------------------------------------
 // Coroutine: the native ARM9 runs on its own stack
@@ -395,6 +444,7 @@ static void note_wild(uint32_t key) {
     std::fprintf(stderr, "[native]   stack:");
     for (int i = 0; i < 16; ++i) std::fprintf(stderr, " %08X", bus_read_u32_slow(g_cpu.R[13] + 4u * (uint32_t)i));
     std::fprintf(stderr, "\n");
+    if (logged == 1) srnx_watch_dump();
     if (!g_srnx_wild_call) g_srnx_wild_call = 1;
 }
 static void note_miss(uint32_t key, bool call = false) {
@@ -573,6 +623,7 @@ static inline uint32_t rd32(uint32_t a) {
 static inline void wr32(uint32_t a, uint32_t v) {
     const uintptr_t b = nr_wr_tab[a >> 12];
     if (b) { memcpy((void*)(b + (a & 0xFFCu)), &v, 4); return; }
+    srnx_watch_write(a & ~3u, v, 4, 2, 0);
     bus_write_u32_slow(a & ~3u, v);
 }
 
@@ -753,12 +804,12 @@ static inline uint16_t rd16h(uint32_t a) {
 static inline void wr16h(uint32_t a, uint16_t v) {
     const uintptr_t b = nr_wr_tab[a >> 12];
     if (b) { memcpy((void*)(b + (a & 0xFFEu)), &v, 2); return; }
-    note_store(a); bus_write_u16_slow(a & ~1u, v);
+    note_store(a); srnx_watch_write(a & ~1u, v, 2, 2, 0); bus_write_u16_slow(a & ~1u, v);
 }
 static inline void wr32h(uint32_t a, uint32_t v) {
     const uintptr_t b = nr_wr_tab[a >> 12];
     if (b) { memcpy((void*)(b + (a & 0xFFCu)), &v, 4); return; }
-    note_store(a); bus_write_u32_slow(a & ~3u, v);
+    note_store(a); srnx_watch_write(a & ~3u, v, 4, 2, 0); bus_write_u32_slow(a & ~3u, v);
 }
 
 // CpuSet (GBATEK): r0 source, r1 destination, r2 bits 0-20 unit count,
@@ -842,7 +893,7 @@ static inline uint8_t rd8h(uint32_t a) {
 static inline void wr8h(uint32_t a, uint8_t v) {
     const uintptr_t b = nr_wr_tab[a >> 12];
     if (b) { *(uint8_t*)(b + (a & 0xFFFu)) = v; return; }
-    note_store(a); bus_write_u8_slow(a, v);
+    note_store(a); srnx_watch_write(a, v, 1, 2, 0); bus_write_u8_slow(a, v);
 }
 static void put_out(uint32_t dst, const std::vector<uint8_t>& out, bool vram) {
     if (vram) {

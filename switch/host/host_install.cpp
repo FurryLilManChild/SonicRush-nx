@@ -36,6 +36,7 @@ extern void (*g_nx_host_round_hook)(uint64_t arm9_cycles);
 
 void nds_set_key_mask(uint32_t mask);   // io.cpp
 void nds_set_touch(uint16_t x, uint16_t y, bool down);   // io.cpp
+void srnx_watch_dump_ext();   // nr_runtime.cpp, switch-test39 write watch
 const uint8_t* nds_vram_oam_live();     // vram.cpp
 uint32_t nds_vram_read_bg(int engine, uint32_t addr, uint32_t width);
 uint32_t nds_vram_read_obj(int engine, uint32_t addr, uint32_t width);
@@ -222,6 +223,11 @@ void play_hook(uint64_t cyc) {
     static long long dump_at = -2;
     if (dump_at == -2) { const char* e = std::getenv("NR_DUMP_AT"); dump_at = e ? std::atoll(e) * 1000000ll : -1; }
     if (dump_at >= 0 && (long long)cyc >= dump_at) { dump_words(std::getenv("NR_DUMP")); dump_at = -1; }
+    {   // NR_SWATCHDUMP=Mcyc: print the write watch ring (nr_runtime.cpp)
+        static long long wd = -2;
+        if (wd == -2) { const char* e = std::getenv("NR_SWATCHDUMP"); wd = e ? std::atoll(e) * 1000000ll : -1; }
+        if (wd >= 0 && (long long)cyc >= wd) { srnx_watch_dump_ext(); wd = -1; }
+    }
     {   // NR_KILLAT=Mcyc: one-shot, drop the player (pointer ov00 0x0236AC60) 4096 px down, a pit death
         static long long kill_at = -2;
         if (kill_at == -2) { const char* e = std::getenv("NR_KILLAT"); kill_at = e ? std::atoll(e) * 1000000ll : -1; }

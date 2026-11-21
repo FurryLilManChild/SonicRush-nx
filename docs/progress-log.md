@@ -1,5 +1,10 @@
 # Progress log (newest first)
 
+## 2026-11-21: switch-test39 (diagnostic)
+
+- test38 result (Mark): the level-select emerald saved. The zone 3 act 1 death froze again (no special stage before it this time). The wild-call log: task loop main 0x02036E70 runs the object update main 0x0206C3D0 with r5 = 0x0236ACA0, the first byte after the act overlay's bss (ov00 0x022C5C80 + 0xA3E40 + bss 0x11E0); it calls the object's callback [r5+0x6C] = 0xBBBBBBBB (lr 0x0206C4B8). In the host zone 2 and zone 3 runs that memory is all zero and nothing writes it (zone 3 act 1 with a death: no writes). Who allocated an object there and who overwrote it is not known.
+- Diagnostic: stores into 0x0236ACA0..0x0236AE00 go through the slow path (that page only); every CPU store (with the last entered function, NR_OVSTAMP now also records it), native SWI store and DMA write (with its source) goes into a 128-entry ring; any store to the callback (+0x6C) is logged at once; on a wild call the ring and the object are printed. Checked on the host on the player record (NR_SWATCH): writes and functions logged.
+
 ## 2026-11-21: switch-test38
 
 - test37 result (Mark): world map after level-select special stages works, results layout correct, robots and prompts fine. The emerald won from a level-select special stage was not on the world map. After a generator special stage in zone 3 act 1 and about 90 s of play, a death led to the respawn card, then calls into 0xBBBBBBBA and onward (unmapped reads at 0xBBB9xxxx), 1.7 fps, white screen. Not reproduced on the host (deaths in zone 2 and 3 act 1, and after an act resume, respawn fine); cause unknown.

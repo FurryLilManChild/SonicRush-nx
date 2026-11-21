@@ -146,7 +146,10 @@ void nr_fentry(uint32_t pc);
    the slots once a frame to tell screens apart by the game's own code. */
 extern uint32_t g_nr_ovstamp[3][8192];
 extern uint32_t g_nr_ovserial;
-#define NR_OVSTAMP(ov, i) (g_nr_ovstamp[(ov)][(i)] = g_nr_ovserial)
+/* switch-test39: the last stamped function (group << 16 | index), for the
+   write watch on the zone 3 death object (nr_runtime.cpp srnx_watch) */
+extern uint32_t g_nr_lastfn;
+#define NR_OVSTAMP(ov, i) (g_nr_lastfn = ((uint32_t)(ov) << 16) | (uint32_t)(i), g_nr_ovstamp[(ov)][(i)] = g_nr_ovserial)
 #define NR_ENTER() do { if (__builtin_expect((char*)__builtin_frame_address(0) < nr_stack_limit, 0)) nr_stack_overflow(); } while (0)
 
 /* Host debug: NR_CALLTRACE builds log every native function entry
