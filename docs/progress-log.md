@@ -1,5 +1,14 @@
 # Progress log (newest first)
 
+## 2026-11-21: switch-test40
+
+- Host sweep with level select: every act, boss and special stage (14 acts, 7 bosses, 7 special stages) to a few seconds of play, layout per frame logged, view sampled. Zone 3 act 2's title card flickered card / stage (3297M to 3612M); the zone 3 and zone 5 bosses fell out of the boss layout in the white fade after a death. Everything else switched as expected. Zone 7's boss stops in its pre-boss dialogue (no input to advance it).
+- Card: once on, it stays while the stage runs with no play code. Boss: the boss layout holds for up to 180 frames after the boss code last ran over frames with no other screen's code (stage or card); the card never overrides the boss (test39 log, Mark: the ball hit). Host: both fixed.
+- Results, zone 3 act 1 (Mark's rpl-002): the view sat at world y 0 with the main camera at y 2928, i.e. the camera target no longer gave Sonic's place. The view now follows the target only within 400 x 320 px of the main camera's screen, else holds the last good target. Lead, not confirmed: the host could not finish the act (Sonic placed by the goal does not trigger it).
+- Sprites (Mark's rpl-003, frames 64, 72, 105, 113): the robot's new pose pictures reach sprite memory one frame before its new layout reaches the records. The robot redrawn from the frame's records with the previous frame's sprite memory is whole; with its own frame's memory it is in pieces, as on screen. The view now draws with the previous frame's sprite memory. Host zone 1 act 1: Sonic's dash effect and the birds' wing frames now match the DS screen of the same frame (before, a frame off).
+- Raft water (Mark's rpl-004): not fixed. Zone 3 moves BG1 per line by HBlank DMA from two tables (0x02227998 / 0x02227F98 engine A, swapped each frame). Using the table in the scaled far background put water at the wrong height (reverted). Host, zone 3 act 2 near the raft: with BG1, BG2 or BG3 turned off in the view the water bands remain, so they are not from those layers; open.
+- Host tools: NR_TELEAT (place the player and both cameras), NR_WIDE_NOBG (drop BG layers from the dumped view).
+
 ## 2026-11-21: switch-test39 (diagnostic)
 
 - test38 result (Mark): the level-select emerald saved. The zone 3 act 1 death froze again (no special stage before it this time). The wild-call log: task loop main 0x02036E70 runs the object update main 0x0206C3D0 with r5 = 0x0236ACA0, the first byte after the act overlay's bss (ov00 0x022C5C80 + 0xA3E40 + bss 0x11E0); it calls the object's callback [r5+0x6C] = 0xBBBBBBBB (lr 0x0206C4B8). In the host zone 2 and zone 3 runs that memory is all zero and nothing writes it (zone 3 act 1 with a death: no writes). Who allocated an object there and who overwrote it is not known.

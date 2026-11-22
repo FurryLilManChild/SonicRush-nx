@@ -263,7 +263,15 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     const Latch& L = g_latch[std::clamp(g_srnx_cam_lag, 0, 3)];
     if (!L.ok) return false;
     const int cam0x = L.cam0x, cam0y = L.cam0y, cam1y = L.cam1y;
-    const float tx = L.tx, ty = L.ty;
+    // switch-test40: follow Sonic only while he is near the main camera's
+    // screen. On zone 3 act 1's results (Mark's rpl-002) the view sat at the
+    // level's top edge (world y 0) with the main camera at y 2928: the target
+    // no longer gave Sonic's place. Hold the last good target then.
+    static float good_x = 0, good_y = 0; static bool have_good = false;
+    float tx = L.tx, ty = L.ty;
+    if (std::fabs(tx - (cam0x + 128)) < 400.f && std::fabs(ty - (cam0y + 96)) < 320.f) { good_x = tx; good_y = ty; have_good = true; }
+    else if (have_good && std::fabs(good_x - (cam0x + 128)) < 400.f && std::fabs(good_y - (cam0y + 96)) < 320.f) { tx = good_x; ty = good_y; }
+    else { tx = (float)(cam0x + 128); ty = (float)(cam0y + 96); }
     const int lw = NR_RD16(lay[0]), lh = NR_RD16(lay[0] + 2);
     camera_update(tx, ty, VW, VH, lw * 64, lh * 64, lay[0]);
     const int wx = (int)std::lround(g_cam.cx - VW * 0.5f), wy = (int)std::lround(g_cam.cy - VH * 0.5f);
@@ -418,7 +426,20 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
     if (!vv || !pal) return false;
     SNAP_T(6);
     copy_vram(data + p.off_bg, vv->bg, 32, false);
-    copy_vram(data + p.off_obj, vv->obj, 16, true);
+    {   // switch-test40: sprite pictures from one frame earlier. The sprite
+        // records describe the frame before the one whose pictures are in
+        // sprite memory now: when a many-piece sprite changes pose, its new
+        // pictures arrive a frame before its new layout (Mark's rpl-003,
+        // frames 64, 72, 105, 113: the robot redrawn from the records with the
+        // previous frame's memory is whole, with its own frame's memory it is
+        // in pieces, as on screen).
+        static uint8_t prev[kSrnxObjVram], cur[kSrnxObjVram];
+        static bool have_prev = false;
+        copy_vram(cur, vv->obj, 16, true);
+        std::memcpy(data + p.off_obj, have_prev ? prev : cur, kSrnxObjVram);
+        std::memcpy(prev, cur, kSrnxObjVram);
+        have_prev = true;
+    }
     std::memcpy(data + p.off_bgpal, pal, 512);
     std::memcpy(data + p.off_objpal, pal + 512, 512);
     SNAP_T(1);
@@ -1214,12 +1235,37 @@ int srnx_code_frame() {
     // whenever Sonic is on the ground. Switches on the first frame (the boss
     // check also runs during the boss card, so waiting flashed the boss layout).
     {
-        static int ctx = -2, play = -2, streak = 0;
-        if (ctx == -2) { ctx = ovfn_index(0, 0x02346AA8u); play = ovfn_index(0, 0x0234D5B8u); }
+        // switch-test40: also the card's own code must run. In the zone 3
+        // boss, hitting the ball back stops the play code for a moment and the
+        // card layout flipped in (Mark, test39 log: boss / act title card 11
+        // times). Five main program functions run in every card frame (719:
+        // two zone 1 act cards, a respawn card, the zone 3 boss card) and in
+        // no zone 3 boss fight frame (482); 3 of the 5 are required.
+        static int ctx = -2, play = -2, streak = 0, cf[5];
+        static const uint32_t kCard[5] = {0x0205D060u, 0x0205D410u, 0x0205D46Cu, 0x0205D4F4u, 0x0205D608u};
+        if (ctx == -2) { ctx = ovfn_index(0, 0x02346AA8u); play = ovfn_index(0, 0x0234D5B8u); for (int i = 0; i < 5; ++i) cf[i] = ovfn_index(2, kCard[i]); }
         const bool in_stage = ctx >= 0 && g_nr_ovstamp[0][ctx] == s;
         const bool playing = play >= 0 && g_nr_ovstamp[0][play] == s;
-        streak = (in_stage && !playing) ? streak + 1 : 0;
-        if (streak >= 1 && (scene == 0 || scene == 2)) scene = 14;
+        int ch = 0;
+        for (int i = 0; i < 5; ++i) ch += cf[i] >= 0 && g_nr_ovstamp[2][cf[i]] == s;
+        // switch-test40: once on, the card stays while the stage runs with no
+        // play code (zone 3 act 2: the card code skips frames and the layout
+        // flickered card / stage on the host sweep, 3297M to 3612M)
+        static bool held = false;
+        held = in_stage && !playing && (ch >= 3 || held);
+        streak = held ? streak + 1 : 0;
+        // switch-test40 (Mark): a screen's own code holds its layout while it
+        // runs. The boss code runs on every boss frame, its card included, so
+        // a card rule never overrides it.
+        if (streak >= 1 && scene == 0) scene = 14;
+    }
+    {   // switch-test40 (Mark): a strong screen holds. After the boss code ran,
+        // the boss layout stays for up to 3 seconds of frames with no other
+        // screen's own code (a white fade after a death, a moment where the
+        // boss code pauses); only a screen with its own signature ends it.
+        static int boss_age = 1 << 20;
+        if (scene == 2) boss_age = 0;
+        else if (++boss_age < 180 && (scene == 0 || scene == 14)) scene = 2;
     }
     {   // switch-test35: the same dialogue code also runs on the world map,
         // where the dialogue and the map are on the bottom screen (Mark's

@@ -228,6 +228,27 @@ void play_hook(uint64_t cyc) {
         if (wd == -2) { const char* e = std::getenv("NR_SWATCHDUMP"); wd = e ? std::atoll(e) * 1000000ll : -1; }
         if (wd >= 0 && (long long)cyc >= wd) { srnx_watch_dump_ext(); wd = -1; }
     }
+    {   // NR_TELEAT=Mcyc,x,y: one-shot, put the player at x,y (pixels; record x/y at +0x10/+0x14 in px<<8)
+        static long long tat = -2; static int tx = 0, ty = 0;
+        if (tat == -2) { const char* e = std::getenv("NR_TELEAT"); long long m = 0;
+            tat = (e && std::sscanf(e, "%lld,%d,%d", &m, &tx, &ty) == 3) ? m * 1000000ll : -1; }
+        if (tat >= 0 && (long long)cyc >= tat) {
+            const uint32_t p = bus_read_u32_slow(0x0236AC60u);
+            if (p >= 0x02080000u && p < 0x02300000u) {
+                const uint32_t x = (uint32_t)tx << 8, y = (uint32_t)ty << 8;
+                bus_write_u16_slow(p + 0x10u, (uint16_t)x); bus_write_u16_slow(p + 0x12u, (uint16_t)(x >> 16));
+                bus_write_u16_slow(p + 0x14u, (uint16_t)y); bus_write_u16_slow(p + 0x16u, (uint16_t)(y >> 16));
+                for (uint32_t c : {0x0236AAD8u, 0x0236AAD8u + 0x64u}) {   // both camera records, so the camera bounds do not kill him
+                    const int32_t cy = (int32_t)bus_read_u32_slow(c + 8) >> 8, oy = c == 0x0236AAD8u ? 0 : cy - ((int32_t)bus_read_u32_slow(0x0236AAE0u) >> 8);
+                    const uint32_t nx = (uint32_t)(tx - 128) << 8, ny = (uint32_t)(ty - 96 + oy) << 8;
+                    bus_write_u16_slow(c + 4, (uint16_t)nx); bus_write_u16_slow(c + 6, (uint16_t)(nx >> 16));
+                    bus_write_u16_slow(c + 8, (uint16_t)ny); bus_write_u16_slow(c + 10, (uint16_t)(ny >> 16));
+                }
+                std::fprintf(stderr, "[host] NR_TELEAT: player %08X to %d,%d\n", p, tx, ty);
+                tat = -1;
+            }
+        }
+    }
     {   // NR_KILLAT=Mcyc: one-shot, drop the player (pointer ov00 0x0236AC60) 4096 px down, a pit death
         static long long kill_at = -2;
         if (kill_at == -2) { const char* e = std::getenv("NR_KILLAT"); kill_at = e ? std::atoll(e) * 1000000ll : -1; }
@@ -291,6 +312,7 @@ void play_hook(uint64_t cyc) {
                 static uint32_t wide[kSrnxWideMaxW * kSrnxWideMaxH];
                 SrnxWideParams pp = g_wide_p;
                 if (std::getenv("NR_WIDE_NOPASTE")) pp.main_valid = 0;
+                if (const char* e = std::getenv("NR_WIDE_NOBG")) for (const char* q = e; *q; ++q) if (*q >= '0' && *q <= '3') pp.dispcnt &= ~(1u << (8 + (*q - '0')));
                 {
                     const auto t0 = std::chrono::steady_clock::now();
                     for (int rep = 0; rep < 10; ++rep) srnx_wide_draw_cpu(pp, g_wide_data.data(), wide, g_wide_p.view_w);
