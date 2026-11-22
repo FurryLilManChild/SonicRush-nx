@@ -18,6 +18,7 @@ extern int g_srnx_codelist_n;   // srnx_wide_render.cpp (file scope: the hooks b
 #include <string>
 #include <vector>
 #include "../src/srnx_replay.h"
+void srnx_extend_strips(SrnxWideParams& p, uint8_t* data);
 #include "gpu2d.h"
 void nds_gpu2d_cow_stats(uint64_t* pages, uint64_t* fallbacks, uint64_t* page_mask);
 extern "C" void nr_install(void);
@@ -508,6 +509,7 @@ struct Install {
                         std::fill(data.begin(), data.end(), 0);
                         if (std::fread(data.data(), 1, ds, f) != ds) break;
                         pp.v3d_valid = 0;
+                        if (std::getenv("NR_FULL_STRIPS")) srnx_extend_strips(pp, data.data());
                         if (const char* e = std::getenv("NR_WIDE_NOBG")) for (const char* q = e; *q; ++q) if (*q >= '0' && *q <= '4') pp.dispcnt &= ~(1u << (8 + (*q - '0')));
                         srnx_wide_draw_cpu(pp, data.data(), out, pp.view_w);
                         char fn[600];

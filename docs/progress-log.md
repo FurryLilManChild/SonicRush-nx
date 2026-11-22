@@ -1,5 +1,12 @@
 # Progress log (newest first)
 
+## 2026-11-22: test40 results, switch-test41 changes (not built yet)
+
+- Mark, test40: act and boss cards better; bosses hold their layout; act results still broken; zone 4 robots break up as zone 3's did; raft capture taken (rpl-002 with its full file).
+- Sprites: a checker (tools outside the repo: draw each sprite from its record with the sprite memory of nearby frames and score it against the DS screen of the same frame) on Mark's zone 4 captures: the flying robot's new shape and new pictures arrive in the same frame, so test40's one-frame-earlier pictures broke it, while zone 3's robot needs them. Timing is per object. test41 keeps both copies and gives each sprite whose pictures differ the copy that matches what the DS drew for it this frame; off the DS screen, the earlier copy if the same sprite (tile, shape, size) was drawn last frame, else the current one (29 of 32 decidable cases right in Mark's captures). Host zone 1 act 1: identical to test40 (which matched the DS there).
+- Raft water (rpl-002 full file, redrawn offline): the water is one row of 32x64 sprites (tile 0x0B7, y 117) across the screen, ending at the DS screen's bottom edge; the per-line BG1 table is flat there (not the cause). test41: a row of 4 or more identical sprites reaching the DS screen's bottom edge has its bottom tile row repeated as 32x8 pieces down to the view's bottom. Offline: water to the bottom.
+- Act clear: the stage view stayed on while the game made the main screen the results panel (rpl-003: stripes). Host zone 1 act 1 played to the goal (NR_TELEAT 20300,1560 then right): four main-program functions (0x02047459, 0x02047ECD, 0x020474F9, 0x02047665) run in all 572 results frames and in none of 16,960 other host frames. 3 of 4 in a frame = scene 15 (act clear), drawn as both screens shrunk like the card. Host: scene 15 from 4291M to the end; zone 1, 3, 4 acts and zone 3 boss sweep: unchanged.
+
 ## 2026-11-21: switch-test40
 
 - Host sweep with level select: every act, boss and special stage (14 acts, 7 bosses, 7 special stages) to a few seconds of play, layout per frame logged, view sampled. Zone 3 act 2's title card flickered card / stage (3297M to 3612M); the zone 3 and zone 5 bosses fell out of the boss layout in the white fade after a death. Everything else switched as expected. Zone 7's boss stops in its pre-boss dialogue (no input to advance it).

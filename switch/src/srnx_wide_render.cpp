@@ -252,6 +252,166 @@ static std::chrono::steady_clock::time_point g_snap_t;
 #else
 #define SNAP_T(i) do {} while (0)
 #endif
+// switch-test41: sprite pictures per sprite. A sprite's pictures can reach
+// sprite memory a frame before its record (zone 3's robot, test39 rpl-003:
+// new pose pictures, old layout) or in the same frame (zone 4's flying robot,
+// test40 rpl-005: new shape and new pictures together; test40 drew every
+// sprite a frame late and broke it). So both copies are kept, and each sprite
+// whose pictures differ between them gets the one that matches what the DS
+// drew for it on the main screen this frame; a sprite off the DS screen gets
+// the previous pictures if the same sprite (tile, shape, size) was drawn last
+// frame (its pose pictures came early) and the current ones if it is new.
+// Checked offline on Mark's test40 captures (rpl-004/005, by DS pixels).
+uint8_t g_obj_cur[kSrnxObjVram], g_obj_prev[kSrnxObjVram];
+bool g_obj_have_prev = false;
+uint32_t g_obj_keys[2][kSrnxSprMax];
+uint32_t g_obj_nkeys[2] = {0, 0};
+int g_obj_kcur = 0;
+static const uint8_t kSprW[3][4] = {{8, 16, 32, 64}, {16, 32, 32, 64}, {8, 8, 16, 32}};
+static const uint8_t kSprH[3][4] = {{8, 16, 32, 64}, {8, 8, 16, 32}, {16, 32, 32, 64}};
+
+int obj_score(const SrnxWideParams& p, const uint8_t* obj, const uint8_t* objpal, const SrnxWideSpr& o,
+              const uint32_t* ds, int* total) {
+    const uint32_t a0 = o.a01 & 0xFFFF, a1 = o.a01 >> 16, a2 = o.a2;
+    const uint32_t sh = a0 >> 14, sz = a1 >> 14;
+    const int w = kSprW[sh][sz], h = kSprH[sh][sz];
+    const bool c256 = (a0 >> 13) & 1, hf = (a1 >> 12) & 1, vf = (a1 >> 13) & 1;
+    const uint32_t step = ((p.dispcnt >> 4) & 1) ? (32u << ((p.dispcnt >> 20) & 3)) : 32u;
+    const uint32_t base = (a2 & 0x3FF) * step, pb = (a2 >> 12) & 15;
+    const int dx0 = o.x - p.main_x, dy0 = o.y - p.main_y;
+    int hit = 0, tot = 0;
+    for (int py = 0; py < h; ++py) {
+        const int Y = dy0 + py;
+        if (Y < 0 || Y >= 192) continue;
+        const int sy = vf ? h - 1 - py : py;
+        for (int px = 0; px < w; ++px) {
+            const int X = dx0 + px;
+            if (X < 0 || X >= 256) continue;
+            const int sx = hf ? w - 1 - px : px;
+            const uint32_t ti = (uint32_t)((sy >> 3) * (w >> 3) + (sx >> 3));
+            uint32_t v, pi;
+            if (c256) { v = obj[(base + ti * 64 + (sy & 7) * 8 + (sx & 7)) & (kSrnxObjVram - 1)]; pi = v; }
+            else {
+                const uint8_t b = obj[(base + ti * 32 + (sy & 7) * 4 + ((sx & 7) >> 1)) & (kSrnxObjVram - 1)];
+                v = (sx & 1) ? (b >> 4) : (b & 15); pi = pb * 16 + v;
+            }
+            if (!v) continue;
+            ++tot;
+            const uint32_t c = rgb((uint16_t)(objpal[pi * 2] | (objpal[pi * 2 + 1] << 8))), d = ds[Y * 256 + X];
+            int e = 0;
+            for (int k = 0; k < 24; k += 8) e = std::max(e, std::abs((int)((c >> k) & 255) - (int)((d >> k) & 255)));
+            hit += e <= 24;
+        }
+    }
+    *total = tot;
+    return hit;
+}
+
+void srnx_obj_pick(const SrnxWideParams& p, uint8_t* data, const uint32_t* mainscr) {
+    const SrnxWideSpr* sp = reinterpret_cast<const SrnxWideSpr*>(data + p.off_spr);
+    uint8_t* obj = data + p.off_obj;   // holds g_obj_cur
+    const uint8_t* objpal = data + p.off_objpal;
+    const uint32_t step = ((p.dispcnt >> 4) & 1) ? (32u << ((p.dispcnt >> 20) & 3)) : 32u;
+    const int kl = g_obj_kcur ^ 1;
+    uint32_t& nk = g_obj_nkeys[g_obj_kcur];
+    nk = 0;
+    for (uint32_t i = 0; i < p.nspr; ++i) {
+        const SrnxWideSpr& o = sp[i];
+        const uint32_t a0 = o.a01 & 0xFFFF, a1 = o.a01 >> 16;
+        const uint32_t key = (o.a2 & 0xFFFF) | (((a0 >> 8) & 0xFF) << 16) | (((a1 >> 14) & 3) << 24);
+        g_obj_keys[g_obj_kcur][nk++] = key;
+        if (!g_obj_have_prev || ((a0 >> 8) & 1) || (a0 >> 14) == 3 || ((a0 >> 10) & 3) == 3) continue;
+        const uint32_t sh = a0 >> 14, sz = a1 >> 14;
+        const uint32_t bytes = (uint32_t)(kSprW[sh][sz] / 8) * (kSprH[sh][sz] / 8) * (((a0 >> 13) & 1) ? 64u : 32u);
+        const uint32_t base = ((o.a2 & 0x3FF) * step) & (kSrnxObjVram - 1);
+        if (base + bytes > kSrnxObjVram || !std::memcmp(g_obj_cur + base, g_obj_prev + base, bytes)) continue;
+        bool use_prev = false, decided = false;
+        if (p.main_valid && mainscr) {
+            int tp = 0, tc = 0;
+            const int hp = obj_score(p, g_obj_prev, objpal, o, mainscr, &tp), hc = obj_score(p, g_obj_cur, objpal, o, mainscr, &tc);
+            if (tp >= 16 || tc >= 16) {
+                const float fp = (float)hp / (float)std::max(tp, 1), fc = (float)hc / (float)std::max(tc, 1);
+                if (std::fabs(fp - fc) >= 0.1f) { use_prev = fp > fc; decided = true; }
+            }
+        }
+        if (!decided) {
+            use_prev = false;
+            for (uint32_t k = 0; k < g_obj_nkeys[kl]; ++k) if (g_obj_keys[kl][k] == key) { use_prev = true; break; }
+        }
+        if (use_prev) std::memcpy(obj + base, g_obj_prev + base, bytes);
+    }
+    std::memcpy(g_obj_prev, g_obj_cur, kSrnxObjVram);
+    g_obj_have_prev = true;
+    g_obj_kcur ^= 1;
+}
+
+// switch-test41: water strips. Zone 3 act 2's water on the raft is one row of
+// 64x64 sprites at the surface, across the DS screen, ending at the DS
+// screen's bottom edge (Mark's test40 rpl-002: 19 sprites, tile 0x0B7, y 117
+// in a view whose DS main screen ends at 181): the DS never shows deeper.
+// Our view goes lower, and showed the far background under the water. A row
+// of 4 or more identical sprites side by side that reaches the DS screen's
+// bottom edge is such a strip: its bottom tile row is repeated down to the
+// view's bottom edge (as 32x8 pieces of the same pictures).
+void srnx_extend_strips(SrnxWideParams& p, uint8_t* data) {
+    constexpr uint32_t kShapeMask = ~(0x01FF0000u | 0xFFu);   // a01 without x and y
+    if (!((p.dispcnt >> 4) & 1)) return;   // 1D sprite mapping only
+    SrnxWideSpr* sp = reinterpret_cast<SrnxWideSpr*>(data + p.off_spr);
+    const uint32_t step = 32u << ((p.dispcnt >> 20) & 3);
+    const int ds_bottom = p.main_y + 192;
+    SrnxWideSpr add[kSrnxSprMax];
+    uint32_t na = 0;
+    for (uint32_t i = 0; i < p.nspr; ++i) {
+        const SrnxWideSpr& o = sp[i];
+        const uint32_t a0 = o.a01 & 0xFFFF, a1 = o.a01 >> 16;
+        if (((a0 >> 8) & 3) || ((a0 >> 10) & 3) || ((a0 >> 13) & 1) || (a0 >> 14) == 3) continue;   // plain 16-colour sprites
+        const int w = kSprW[a0 >> 14][a1 >> 14], h = kSprH[a0 >> 14][a1 >> 14];
+        if (w < 32 || o.y + h < ds_bottom || o.y + h >= p.view_h || o.y + h > ds_bottom + 8) continue;
+        // left end of a run only: no identical sprite just left of it
+        bool left = false;
+        int run = 0;
+        for (uint32_t j = 0; j < p.nspr; ++j) {
+            const SrnxWideSpr& q = sp[j];
+            if (q.y != o.y || (q.a01 & kShapeMask) != (o.a01 & kShapeMask) || q.a2 != o.a2) continue;
+            if (q.x == o.x - w) left = true;
+        }
+        if (left) continue;
+        for (int x = o.x;; x += w) {
+            bool found = false;
+            for (uint32_t j = 0; j < p.nspr && !found; ++j)
+                found = sp[j].x == x && sp[j].y == o.y && (sp[j].a01 & kShapeMask) == (o.a01 & kShapeMask) && sp[j].a2 == o.a2;
+            if (!found) break;
+            ++run;
+        }
+        if (run < 4) continue;
+        const uint32_t row_bytes = (uint32_t)(w / 8) * 32u * (uint32_t)(h / 8 - 1);   // start of the bottom tile row
+        if (row_bytes % step || (32u * 4u) % step) continue;
+        const bool hf = (a1 >> 12) & 1;
+        for (int k = 0; k < run; ++k)
+            for (int y = o.y + h; y < p.view_h && na + 2 <= kSrnxSprMax; y += 8)
+                for (int half = 0; half < w / 32; ++half) {
+                    if (na >= kSrnxSprMax) break;
+                    const int src_half = hf ? (w / 32 - 1 - half) : half;
+                    const uint32_t tile = (o.a2 & 0x3FF) + (row_bytes + (uint32_t)src_half * 128u) / step;
+                    SrnxWideSpr& n = add[na++];
+                    n.x = o.x + k * w + half * 32;
+                    n.y = y;
+                    const uint32_t na0 = (a0 & 0x3F00) | (1u << 14) | ((uint32_t)y & 0xFF);
+                    const uint32_t na1 = (a1 & 0x31FF) | (1u << 14);
+                    n.a01 = na0 | (na1 << 16);
+                    n.a2 = (o.a2 & ~0x3FFu) | (tile & 0x3FF);
+                }
+    }
+    if (!na) return;
+    const uint32_t room = kSrnxSprMax - std::min<uint32_t>(kSrnxSprMax, p.nspr + p.nhud);
+    na = std::min(na, room);
+    if (!na) return;
+    std::memmove(sp + p.nspr + na, sp + p.nspr, p.nhud * sizeof(SrnxWideSpr));
+    // drawn behind the strip's own sprites: insert at the end of the world list
+    std::memcpy(sp + p.nspr, add, na * sizeof(SrnxWideSpr));
+    p.nspr += na;
+}
+
 bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, const uint32_t* bottom) {
     SNAP_T(0);
     std::memset(&p, 0, sizeof(p));
@@ -433,12 +593,10 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
         // frames 64, 72, 105, 113: the robot redrawn from the records with the
         // previous frame's memory is whole, with its own frame's memory it is
         // in pieces, as on screen).
-        static uint8_t prev[kSrnxObjVram], cur[kSrnxObjVram];
-        static bool have_prev = false;
-        copy_vram(cur, vv->obj, 16, true);
-        std::memcpy(data + p.off_obj, have_prev ? prev : cur, kSrnxObjVram);
-        std::memcpy(prev, cur, kSrnxObjVram);
-        have_prev = true;
+        // switch-test41: kept as two copies; each sprite gets the one that
+        // fits it (srnx_obj_pick below), since the timing is per object
+        copy_vram(g_obj_cur, vv->obj, 16, true);
+        std::memcpy(data + p.off_obj, g_obj_cur, kSrnxObjVram);
     }
     std::memcpy(data + p.off_bgpal, pal, 512);
     std::memcpy(data + p.off_objpal, pal + 512, 512);
@@ -567,8 +725,8 @@ bool srnx_wide_snapshot(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
         SNAP_T(5);
     }
     SNAP_T(7);
-    if (false) {
-    }
+    srnx_extend_strips(p, data);
+    srnx_obj_pick(p, data, mainscr);
     (void)kGap;
     return true;
 }
@@ -1267,6 +1425,19 @@ int srnx_code_frame() {
         if (scene == 2) boss_age = 0;
         else if (++boss_age < 180 && (scene == 0 || scene == 14)) scene = 2;
     }
+    {   // switch-test41: act clear (results). Four main-program functions run in
+        // every frame of the results and in no frame of play, cards, bosses or
+        // special stages in any host trace (host: zone 1 act 1 played to its
+        // goal, 572 results frames; 16,960 other frames). In test40 the stage
+        // view stayed on during the results and drew the level over what the
+        // game had turned into the results panel (Mark's rpl-003: stripes).
+        static int rf[4] = {-2, -2, -2, -2};
+        static const uint32_t kRes[4] = {0x02047459u, 0x02047ECDu, 0x020474F9u, 0x02047665u};
+        if (rf[0] == -2) for (int i = 0; i < 4; ++i) rf[i] = ovfn_index(2, kRes[i]);
+        int rn = 0;
+        for (int i = 0; i < 4; ++i) rn += rf[i] >= 0 && g_nr_ovstamp[2][rf[i]] == s;
+        if (rn >= 3 && (scene == 0 || scene == 14 || scene == 2)) scene = 15;
+    }
     {   // switch-test35: the same dialogue code also runs on the world map,
         // where the dialogue and the map are on the bottom screen (Mark's
         // rpl-017, 2026-11-20). A cutscene with no stage start since the world
@@ -1399,7 +1570,7 @@ int srnx_special_detect(const uint32_t* top, const uint32_t* bottom, bool main_o
             mode = want; run = 0;
             static const char* names[] = {"off", "special stage", "boss", "top screen", "bottom screen",
                                           "special stage intro", "emerald result", "both screens shrunk",
-                                          "logos", "title", "main menu", "world map", "character select", "boss title card", "act title card"};
+                                          "logos", "title", "main menu", "world map", "character select", "boss title card", "act title card", "act clear"};
             std::fprintf(stderr, "[srnx] one-screen layout: %s\n", names[mode]);
         }
     } else run = 0;
@@ -1436,7 +1607,7 @@ void put_top_full(const uint32_t* src, uint32_t* out, int pitch) {
 void srnx_special_compose(int mode, const uint32_t* top, const uint32_t* bottom, uint32_t* out, int pitch) {
     if (mode == 3) { put_top_full(top, out, pitch); return; }
     if (mode == 4 || mode == 5) { put_top_full(bottom, out, pitch); return; }   // the bottom screen, same scaling
-    if ((mode >= 7 && mode <= 10) || mode == 12 || mode == 13 || mode == 14) {
+    if ((mode >= 7 && mode <= 10) || mode == 12 || mode == 13 || mode == 14 || mode == 15) {
         // one tall picture: rows y0..y1 of the 256x384 column, scaled to 240
         // high and centred; the sides are filled with each row's edge pixels
         int y0 = 0, y1 = 384;
