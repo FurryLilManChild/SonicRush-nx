@@ -13,6 +13,7 @@ extern "C" { extern uint32_t g_srnx_linelog_last[254]; extern int g_srnx_linelog
 extern "C" uint32_t bus_read_u32_slow(uint32_t addr);
 extern uint32_t g_srnx_touch_word;   // io.cpp: x | y << 8 | down << 16
 uint32_t nds_gpu2d_read(uint32_t addr, uint32_t width);
+extern "C" uint32_t nds_dma9_hblank_src(uint32_t dst);   // io.cpp (patch)
 
 #ifndef MPHNX_APP_DIR
 #define MPHNX_APP_DIR "."
@@ -42,6 +43,20 @@ struct ViewFrame {   // filled on the presenter thread
     std::vector<uint32_t> px;
 };
 
+// switch-test40: the last kFull stage frames in full (the view's whole
+// snapshot apart from the 3D layer, plus engine A's per-line BG1 scroll
+// table), so a replay frame can be drawn again offline on the host with any
+// change (rpl-004: the raft water could not be redrawn from the pictures).
+constexpr int kFull = 40;
+struct FullFrame {
+    uint32_t serial = 0;
+    SrnxWideParams p{};
+    uint32_t line[193] = {};   // HBlank DMA source of BG1 scroll (0 = none), then its 192 words
+    std::vector<uint8_t> data;
+};
+FullFrame g_full[kFull];
+int g_full_next = 0;
+
 std::mutex g_mu;
 GameFrame g_game[kFrames];
 ViewFrame g_view[kFrames];
@@ -69,6 +84,7 @@ void srnx_replay_reset() {
     std::lock_guard<std::mutex> lk(g_mu);
     for (auto& f : g_game) f.h.serial = 0;
     for (auto& f : g_view) f.serial = 0;
+    for (auto& f : g_full) f.serial = 0;
 }
 
 void srnx_replay_record(SrnxWideParams& p, uint8_t* data, const uint32_t* top, const uint32_t* bottom) {
@@ -100,6 +116,17 @@ void srnx_replay_record(SrnxWideParams& p, uint8_t* data, const uint32_t* top, c
         std::memcpy(f.spr.data() + 6660, g_srnx_linelog_last, m * 8);
     }
     std::memcpy(f.obj.data(), data + p.off_obj, kSrnxObjVram);
+    {
+        FullFrame& F = g_full[g_full_next];
+        g_full_next = (g_full_next + 1) % kFull;
+        F.serial = serial;
+        F.p = p;
+        F.data.assign(data, data + p.off_v3d);
+        const uint32_t src = nds_dma9_hblank_src(0x04000014u);
+        F.line[0] = src;
+        const bool ok = src >= 0x02000000u && src + 192u * 4u < 0x02400000u;
+        for (int i = 0; i < 192; ++i) F.line[1 + i] = ok ? bus_read_u32_slow(src + 4u * (uint32_t)i) : 0u;
+    }
 }
 
 void srnx_replay_record_ds(const uint32_t* top, const uint32_t* bottom) {
@@ -184,6 +211,29 @@ int srnx_replay_save(char* msg, int msg_len) {
         std::fwrite(g.obj.data(), 1, kSrnxObjVram, f);
     }
     std::fclose(f);
+    {   // switch-test40: rpl-NNN-full.bin: "SRNXFUL1", count, sizeof(SrnxWideParams),
+        // then per frame: serial, params, line table (193 u32), data size, data
+        char fp[120];
+        std::snprintf(fp, sizeof fp, MPHNX_APP_DIR "/captures/rpl-%03d-full.bin", n);
+        if (FILE* ff = std::fopen(fp, "wb")) {
+            int fc = 0;
+            for (const auto& F : g_full) fc += F.serial != 0 && !F.data.empty();
+            std::fwrite("SRNXFUL1", 1, 8, ff);
+            const int32_t fh[2] = {fc, (int32_t)sizeof(SrnxWideParams)};
+            std::fwrite(fh, 4, 2, ff);
+            for (int i = 0; i < kFull; ++i) {
+                const FullFrame& F = g_full[(g_full_next + i) % kFull];
+                if (!F.serial || F.data.empty()) continue;
+                const uint32_t ds = (uint32_t)F.data.size();
+                std::fwrite(&F.serial, 4, 1, ff);
+                std::fwrite(&F.p, sizeof F.p, 1, ff);
+                std::fwrite(F.line, 4, 193, ff);
+                std::fwrite(&ds, 4, 1, ff);
+                std::fwrite(F.data.data(), 1, ds, ff);
+            }
+            std::fclose(ff);
+        }
+    }
     ++g_saves;
     std::snprintf(msg, msg_len, "Saved replay %03d (%d frames)", n, count);
     std::fprintf(stderr, "[sonicrush-nx] replay saved: %s (%d frames, %dx%d)\n", path, count, g_vw, g_vh);

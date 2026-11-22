@@ -17,6 +17,7 @@ extern int g_srnx_codelist_n;   // srnx_wide_render.cpp (file scope: the hooks b
 #include <cstring>
 #include <string>
 #include <vector>
+#include "../src/srnx_replay.h"
 #include "gpu2d.h"
 void nds_gpu2d_cow_stats(uint64_t* pages, uint64_t* fallbacks, uint64_t* page_mask);
 extern "C" void nr_install(void);
@@ -312,7 +313,7 @@ void play_hook(uint64_t cyc) {
                 static uint32_t wide[kSrnxWideMaxW * kSrnxWideMaxH];
                 SrnxWideParams pp = g_wide_p;
                 if (std::getenv("NR_WIDE_NOPASTE")) pp.main_valid = 0;
-                if (const char* e = std::getenv("NR_WIDE_NOBG")) for (const char* q = e; *q; ++q) if (*q >= '0' && *q <= '3') pp.dispcnt &= ~(1u << (8 + (*q - '0')));
+                if (const char* e = std::getenv("NR_WIDE_NOBG")) for (const char* q = e; *q; ++q) if (*q >= '0' && *q <= '4') pp.dispcnt &= ~(1u << (8 + (*q - '0')));
                 {
                     const auto t0 = std::chrono::steady_clock::now();
                     for (int rep = 0; rep < 10; ++rep) srnx_wide_draw_cpu(pp, g_wide_data.data(), wide, g_wide_p.view_w);
@@ -411,6 +412,14 @@ void wide_vblank() {
     g_snap_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     ++g_snap_n;
     g_srnx_hide_hud = 1;
+    {   // switch-test40: NR_REPLAYAT=M records replay frames like the Switch and saves at M (MPHNX_APP_DIR/captures)
+        static long long rat = -2;
+        if (rat == -2) { const char* e = std::getenv("NR_REPLAYAT"); rat = e ? std::atoll(e) * 1000000ll : -1; }
+        if (rat >= 0) {
+            if (g_wide_have) srnx_replay_record(g_wide_p, g_wide_data.data(), nds_gpu2d_framebuffer(0), nds_gpu2d_framebuffer(1));
+            if ((long long)g_runtime_cycles >= rat) { char m[128]; srnx_replay_save(m, sizeof m); std::fprintf(stderr, "[host] %s\n", m); rat = -1; }
+        }
+    }
     if (g_wide_have) {   // the DS screens at this VBlank, for host checks
         for (int sc = 0; sc < 2; ++sc)
             if (const uint32_t* fb = nds_gpu2d_framebuffer(sc)) std::memcpy(g_wide_ds[sc], fb, sizeof(g_wide_ds[sc]));
@@ -485,6 +494,34 @@ struct Install {
         g_load_step = parse_step(std::getenv("NR_STATE_LOAD"));
         if (std::getenv("SRNX_NOSKIP")) g_srnx_gx_skip = false;
         if (const char* w = std::getenv("NR_WIDE")) g_srnx_wide = w[0] == '1';
+        if (const char* fr = std::getenv("NR_FULLRENDER")) {   // switch-test40: redraw rpl-NNN-full.bin frames offline
+            char in[512] = {}, stem[512] = {};
+            if (std::sscanf(fr, "%511[^,],%511s", in, stem) == 2) {
+                std::FILE* f = std::fopen(in, "rb");
+                char mg[8]; int32_t fh[2] = {};
+                if (f && std::fread(mg, 1, 8, f) == 8 && !std::memcmp(mg, "SRNXFUL1", 8) && std::fread(fh, 4, 2, f) == 2 && fh[1] == (int32_t)sizeof(SrnxWideParams)) {
+                    static std::vector<uint8_t> data(kSrnxDataBytes);
+                    static uint32_t out[kSrnxWideMaxW * kSrnxWideMaxH];
+                    for (int i = 0; i < fh[0]; ++i) {
+                        uint32_t serial = 0, line[193], ds = 0; SrnxWideParams pp{};
+                        if (std::fread(&serial, 4, 1, f) != 1 || std::fread(&pp, sizeof pp, 1, f) != 1 || std::fread(line, 4, 193, f) != 193 || std::fread(&ds, 4, 1, f) != 1 || ds > data.size()) break;
+                        std::fill(data.begin(), data.end(), 0);
+                        if (std::fread(data.data(), 1, ds, f) != ds) break;
+                        pp.v3d_valid = 0;
+                        if (const char* e = std::getenv("NR_WIDE_NOBG")) for (const char* q = e; *q; ++q) if (*q >= '0' && *q <= '4') pp.dispcnt &= ~(1u << (8 + (*q - '0')));
+                        srnx_wide_draw_cpu(pp, data.data(), out, pp.view_w);
+                        char fn[600];
+                        std::snprintf(fn, sizeof fn, "%s-%03d.wide", stem, i);
+                        if (std::FILE* w = std::fopen(fn, "wb")) { std::fwrite(&pp, sizeof pp, 1, w); std::fwrite(out, 4, (size_t)pp.view_w * pp.view_h, w); std::fclose(w); }
+                        std::snprintf(fn, sizeof fn, "%s-%03d.line", stem, i);
+                        if (std::FILE* w = std::fopen(fn, "wb")) { std::fwrite(line, 4, 193, w); std::fclose(w); }
+                        std::fprintf(stderr, "[host] full frame %d serial %u: world %d,%d main %d,%d bg1 dma %08X\n", i, serial, pp.world_x, pp.world_y, pp.main_x, pp.main_y, line[0]);
+                    }
+                } else std::fprintf(stderr, "[host] NR_FULLRENDER: cannot read %s\n", in);
+                if (f) std::fclose(f);
+            }
+            std::exit(0);
+        }
         {
           if (const char* w = std::getenv("NR_ACT_EXTRA")) g_srnx_act_extra = std::atoi(w);
           if (std::getenv("NR_ACT_OFF")) g_srnx_act_off = 1;

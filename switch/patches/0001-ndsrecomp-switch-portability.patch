@@ -3592,7 +3592,7 @@ index 56dbb80..2640c44 100644
  
      if (info.cpu_brand.empty()) info.cpu_brand = "unknown";
 diff --git a/runner/src/io.cpp b/runner/src/io.cpp
-index 20544a0..524196f 100644
+index 20544a0..ae6ff50 100644
 --- a/runner/src/io.cpp
 +++ b/runner/src/io.cpp
 @@ -1,5 +1,6 @@
@@ -3724,7 +3724,22 @@ index 20544a0..524196f 100644
  
  // IR-cartridge SPI front end (melonDS CartRetailIR::SPIWrite). Byte 0 of a
  // transfer is the IR command and answers 0; 0x00 passes the remainder through
-@@ -1799,6 +1858,7 @@ void nds_io_reset() {
+@@ -1775,6 +1834,14 @@ uint32_t mask_for(uint32_t width) {
+ 
+ }  // namespace
+ 
++// sonicrush-nx test40: the source of an enabled ARM9 HBlank DMA that writes
++// dst on every line (the game's per-line BG scroll table), 0 if none
++extern "C" uint32_t nds_dma9_hblank_src(uint32_t dst) {
++    for (const DmaChannel& d : g_dma[0])
++        if ((d.cnt & 0x80000000u) && ((d.cnt >> 27) & 7) == 2 && d.dst == dst) return d.src;
++    return 0;
++}
++
+ // Global (external linkage): read by runtime_should_yield (runtime_arm.cpp) and
+ // the Tier-3 loop (tier3.cpp) via the io.h extern. Set by brk_check above.
+ bool g_nds_insn_stop = false;
+@@ -1799,6 +1866,7 @@ void nds_io_reset() {
      g_counts = {};
      g_insn_count[0] = g_insn_count[1] = 0;
      std::memset(g_dma, 0, sizeof(g_dma));
@@ -3732,7 +3747,7 @@ index 20544a0..524196f 100644
      g_dma_entry_cycle[0] = g_dma_entry_cycle[1] = 0;
      std::memset(g_spi_trace, 0, sizeof(g_spi_trace));
      std::memset(g_irq_trace, 0, sizeof(g_irq_trace));
-@@ -1829,6 +1889,7 @@ void nds_io_reset() {
+@@ -1829,6 +1897,7 @@ void nds_io_reset() {
      std::memset(g_sqrt_val, 0, sizeof(g_sqrt_val));
      for (auto& cpu : g_timer) for (auto& t : cpu) t = Timer{};
      g_timer_last[0] = g_timer_last[1] = 0;
@@ -3740,7 +3755,7 @@ index 20544a0..524196f 100644
      g_display_last = 0;
      g_spicnt = 0; g_spi_resp = 0; g_spi_deadline = UINT64_MAX;
      g_fw_hold = false; g_fw_cmd = 0; g_fw_status = 0;
-@@ -2012,6 +2073,20 @@ void nds_io_set_cartridge_save_path(const char* path) {
+@@ -2012,6 +2081,20 @@ void nds_io_set_cartridge_save_path(const char* path) {
      g_cart_save_path = path ? path : "";
  }
  
@@ -3761,7 +3776,7 @@ index 20544a0..524196f 100644
  bool nds_io_flush_cartridge_save() {
      if (!g_cart_backup.dirty || g_cart_save_path.empty())
          return true;
-@@ -2048,7 +2123,11 @@ bool nds_io_cartridge_save_snapshot(const uint8_t** data, uint32_t* size,
+@@ -2048,7 +2131,11 @@ bool nds_io_cartridge_save_snapshot(const uint8_t** data, uint32_t* size,
      return true;
  }
  
@@ -3773,7 +3788,7 @@ index 20544a0..524196f 100644
      if (!down) {
          g_tsc_x = 0x000u;
          g_tsc_y = 0x0FFFu;
-@@ -2201,6 +2280,9 @@ uint64_t nds_next_system_event_time() {
+@@ -2201,6 +2288,9 @@ uint64_t nds_next_system_event_time() {
  }
  
  uint64_t nds_next_timer_overflow_time() {
@@ -3783,7 +3798,7 @@ index 20544a0..524196f 100644
      // Timers are catch-up-ticked rather than deadline-scheduled, so the idle
      // fast-forward needs their next overflow as an explicit deadline. Only
      // clock-driven timers own a timeline position; a count-up (cascade) timer
-@@ -2218,6 +2300,8 @@ uint64_t nds_next_timer_overflow_time() {
+@@ -2218,6 +2308,8 @@ uint64_t nds_next_timer_overflow_time() {
              best = std::min(best, when);
          }
      }
@@ -3792,7 +3807,7 @@ index 20544a0..524196f 100644
      return best;
  }
  
-@@ -2241,6 +2325,34 @@ void nds_timer_debug_state(int cpu, NdsTimerDebugState out[4]) {
+@@ -2241,6 +2333,34 @@ void nds_timer_debug_state(int cpu, NdsTimerDebugState out[4]) {
      }
  }
  
@@ -3827,7 +3842,7 @@ index 20544a0..524196f 100644
  uint64_t nds_debug_spi_deadline() { return g_spi_deadline; }
  uint64_t nds_debug_card_deadline() { return g_card_deadline; }
  
-@@ -2263,32 +2375,7 @@ void nds_run_system_events(uint64_t timestamp) {
+@@ -2263,32 +2383,7 @@ void nds_run_system_events(uint64_t timestamp) {
          if (g_spicnt & 0x4000u)
              nds_raise_irq(1, 0x00800000u); // ARM7 IRQ_SPI
      }
@@ -3861,7 +3876,7 @@ index 20544a0..524196f 100644
      if (g_div_deadline <= timestamp) {
          g_div_deadline = UINT64_MAX;
          finish_div();
-@@ -2492,10 +2579,20 @@ void nds_tick_rtc(unsigned long long system_cycles) {
+@@ -2492,10 +2587,20 @@ void nds_tick_rtc(unsigned long long system_cycles) {
  }
  
  // ── Interrupt controller ────────────────────────────────────────────────
@@ -3882,7 +3897,7 @@ index 20544a0..524196f 100644
  }
  
  void nds_clear_irq(int cpu, uint32_t bits) {
-@@ -2710,6 +2807,8 @@ bool io_savestate_import(const NdsIoCoreSaveState& in, std::string* error) {
+@@ -2710,6 +2815,8 @@ bool io_savestate_import(const NdsIoCoreSaveState& in, std::string* error) {
  
      irq_recompute(0);
      irq_recompute(1);
@@ -3891,7 +3906,7 @@ index 20544a0..524196f 100644
      bus_fast_refresh();
      return true;
  }
-@@ -2926,6 +3025,7 @@ uint32_t nds_irq_pending(int cpu) {
+@@ -2926,6 +3033,7 @@ uint32_t nds_irq_pending(int cpu) {
  }
  
  bool nds_cpu_halted(int cpu) { return g_cpu_halted[cpu & 1]; }
@@ -3899,7 +3914,7 @@ index 20544a0..524196f 100644
  
  void nds_cpu_enter_halt(int cpu) {
      cpu &= 1;
-@@ -2957,7 +3057,14 @@ bool nds_dma_cpu_stalled(int cpu) { return dma_any_running(cpu & 1); }
+@@ -2957,7 +3065,14 @@ bool nds_dma_cpu_stalled(int cpu) { return dma_any_running(cpu & 1); }
  // GXFIFO ARM9 stall flag (melonDS CPUStop_GXStall). Set/cleared by the
  // vendored GPU3D via the NDS shim; scheduler consumption lands with the
  // geometry engine's Run() wiring (3D Phase 2).
@@ -3915,7 +3930,7 @@ index 20544a0..524196f 100644
  bool nds_gxfifo_stalled() { return g_gxfifo_stall; }
  
  unsigned long long nds_dma_entry_cycle(int cpu) {
-@@ -2973,6 +3080,10 @@ void nds_dma_trigger(int cpu, uint32_t start_mode) {
+@@ -2973,6 +3088,10 @@ void nds_dma_trigger(int cpu, uint32_t start_mode) {
      }
  }
  
@@ -3926,7 +3941,7 @@ index 20544a0..524196f 100644
  void nds_dma_run(int cpu, unsigned long long target_cycles) {
      cpu &= 1;
      // EXACT, not round-sampled. The scheduler only calls this after
-@@ -3040,14 +3151,51 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
+@@ -3040,14 +3159,51 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
                  if (!request_units || nds_gxfifo_stalled()) break;
                  continue;
              }
@@ -3978,7 +3993,7 @@ index 20544a0..524196f 100644
                  bus_write_u16(d.cur_dst & ~1u, v);
              }
              d.cur_src = static_cast<uint32_t>(
-@@ -3067,11 +3215,11 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
+@@ -3067,11 +3223,11 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
                  // The card asserts a distinct DMA request for each 32-bit word.
                  // Suspend this channel without completing or reloading it; the
                  // next data-ready event resumes the pending transaction.
@@ -3992,7 +4007,7 @@ index 20544a0..524196f 100644
                  nds_gpu3d_check_fifo_dma();
              }
              continue;
-@@ -3087,7 +3235,7 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
+@@ -3087,7 +3243,7 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
              // or the native/ndsref counters silently drift apart.
              ++g_counts.dma_done;
          }
@@ -4001,7 +4016,7 @@ index 20544a0..524196f 100644
          d.in_progress = false;
          brk_check();
      }
-@@ -3123,6 +3271,9 @@ void nds_tick_display(unsigned long long cyc) {
+@@ -3123,6 +3279,9 @@ void nds_tick_display(unsigned long long cyc) {
      for (unsigned long long i = previous_hblank; i < current_hblank; ++i) {
          const int line = static_cast<int>(i % LINES);
          if (line < 192) nds_gpu2d_render_scanline(line);
@@ -4011,7 +4026,7 @@ index 20544a0..524196f 100644
      }
  
      const unsigned long long previous_scanline = g_display_last / SCAN;
-@@ -3232,6 +3383,7 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
+@@ -3232,6 +3391,7 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
              unsigned long long extra = ticks / reload_span;
              T.counter = static_cast<uint16_t>(T.reload + (ticks % reload_span));
              carry = 1 + extra;                                 // overflows this round
@@ -4019,7 +4034,7 @@ index 20544a0..524196f 100644
              if (T.ctrl & 0x40u) {
                  g_counts.timer_ovf += carry;
                  nds_raise_irq(cpu, 1u << (3 + t));
-@@ -3240,11 +3392,97 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
+@@ -3240,11 +3400,97 @@ void nds_tick_timers(int cpu, unsigned long long cpu_cycles) {
      }
  }
  
@@ -4117,7 +4132,7 @@ index 20544a0..524196f 100644
      if (cpu == 0 && gpu2d_reg_addr(addr))
          return nds_gpu2d_read(addr, width) & m;
      if (addr >= 0x04000130u && addr < 0x04000134u) {
-@@ -3307,6 +3545,16 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3307,6 +3553,16 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
              uint16_t v = g_dispstat[cpu] & 0xFFB8u;        // enable + LYC bits
              if (g_in_vblank) v |= 0x0001u;                  // VBlank flag
              if (g_vcount_match[cpu]) v |= 0x0004u;          // latched at line start
@@ -4134,7 +4149,7 @@ index 20544a0..524196f 100644
              if (addr == 0x04000004u && width == 4u)
                  return uint32_t{v} | (uint32_t{g_vcount} << 16u);
              return (v >> ((addr & 1u) * 8)) & m;
-@@ -3346,6 +3594,38 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3346,6 +3602,38 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
              return addr == 0x040001A2u ? (auxspi_read_data() & m) : 0u;
          case 0x040001A4: case 0x040001A5:
          case 0x040001A6: case 0x040001A7:
@@ -4173,7 +4188,7 @@ index 20544a0..524196f 100644
              return (g_romctrl >> ((addr & 3u) * 8)) & m;
          case 0x04000184: case 0x04000185:  // IPCFIFOCNT
              return (fifocnt_read(cpu) >> ((addr & 1u) * 8)) & m;
-@@ -3366,6 +3646,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3366,6 +3654,23 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
                  word = card_response_word(g_card_transfer_pos);
                  g_romctrl &= ~0x00800000u;
                  g_card_transfer_pos += 4u;
@@ -4197,7 +4212,7 @@ index 20544a0..524196f 100644
                  if (g_card_transfer_pos < g_card_transfer_len) {
                      const uint32_t xfercycle =
                          (g_romctrl & 0x08000000u) ? 8u : 5u;
-@@ -3399,8 +3696,56 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
+@@ -3399,8 +3704,56 @@ uint32_t nds_io_read(uint32_t addr, uint32_t width) {
  }
  
  void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
@@ -4254,7 +4269,7 @@ index 20544a0..524196f 100644
      if (card_register_address(addr) && !card_owned_by(cpu)) return;
      if (cpu == 0 && gpu2d_reg_addr(addr)) {
          nds_gpu2d_write(addr, value, width);
-@@ -3483,6 +3828,7 @@ void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
+@@ -3483,6 +3836,7 @@ void nds_io_write(uint32_t addr, uint32_t value, uint32_t width) {
              T.ctrl = newctrl;
              if (now_on && !was_on) { T.counter = T.reload; T.accum = 0; }
          }
