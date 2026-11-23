@@ -1,5 +1,16 @@
 # Progress log (newest first)
 
+## 2026-11-22: 0.5.0 release build
+
+- Mark, test41: everything fixed held, no new issues; playable. Release cleanup requested.
+- Port menu: its own 256x192 picture (rendered on a dark fill) handed to the presenter as NxPresentFrame::menu and blitted 3x in the centre as the last step of every present path (stage view, one-screen layouts, DS screens). It no longer replaces the top DS screen; the stage view keeps running under it.
+- Display: Screen layout is Switch Port (kNxWide) or Original stacked (kNxStacked); other saved layouts open as Switch Port. Resolution removed (it only scaled the DS top screen's 3D) and forced to 1x on load. "Widescreen zoom" renamed "Stage zoom".
+- Removed Metroid Prime Hunters leftovers: Controls rows (Prime bindings, unused: no prime controls in this build), Menu buttons and Lock-on (stubbed here). Save states hidden (never checked on this game). Level select kept.
+- CPU clock defaults to Boost. Test40/41 logs at Boost (190 ten-second samples): emulation thread median 9.2 ms a frame, 90th percentile 12.8, max 13.3; scaled to stock 1020 MHz that is about 16, 22 and 23 ms against 16.7, so stock does not hold 60 in heavy scenes yet.
+- Replays, the stick-click capture and the wild-call capture only with developer.on.
+- Original hbmenu icon (switch/release/icon.jpg: abstract streaks and plain text; the private official-art icon is not used for the release).
+- Release zip: switch/sonicrush-nx/ (nro, game.toml), README.txt, LICENSES/ (GPL-3.0, ndsrecomp MIT and recompiler PolyForm notice, FreeBIOS, arm-recomp-core, recomp-ui, imgui, SDL2, deko3d, third-party notices). romscan: 0 of 1609 sampled ROM chunks in the .nro. nro sha256 c48e44ac..., zip sha256 46d427b5....
+
 ## 2026-11-22: test40 results, switch-test41 changes (not built yet)
 
 - Mark, test40: act and boss cards better; bosses hold their layout; act results still broken; zone 4 robots break up as zone 3's did; raft capture taken (rpl-002 with its full file).

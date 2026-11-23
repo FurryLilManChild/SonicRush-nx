@@ -1,0 +1,31 @@
+SonicRush-nx 0.5.0: third-party notices
+
+The sonicrush-nx.nro includes code from the projects below. Because it links
+melonDS-derived code (through ndsrecomp), the .nro as a whole is distributed
+under the GNU General Public License, version 3 or later (GPL-3.0.txt).
+
+- SonicRush-nx and MPH-nx (FurryLilManChild): GPL-3.0-or-later.
+- ndsrecomp (RetroPortingToolKit, Matthew Stanley): runner and ARMv4T core
+  under the MIT License (ndsrecomp-MIT.txt); melonDS-derived parts under
+  GPL-3.0-or-later. The FreeBIOS program in the .nro was translated with
+  ndsrecomp's recompiler, which is under the PolyForm Noncommercial License
+  1.0.0 (ndsrecomp-recompiler-PolyForm-Noncommercial.txt). This release is
+  free and noncommercial.
+- melonDS (Arisotura and contributors): GPL-3.0-or-later. The deko3d 3D
+  renderer is adapted from RSDuck's melonDS Switch build (GPL-3.0-or-later).
+- arm-recomp-core (Matthew Stanley): MIT (arm-recomp-core.txt).
+- FreeBIOS (Gilead Kutnick): BSD-style (FreeBIOS.txt).
+- recomp-ui (Matthew Stanley): MIT (recomp-ui.txt), with Dear ImGui (Omar
+  Cornut): MIT (imgui.txt).
+- SDL2 (Sam Lantinga and contributors): zlib License (SDL2.txt).
+- deko3d (fincs): zlib License (deko3d.txt).
+- libnx (switchbrew): ISC License.
+- Mesa (EGL, glapi) and libdrm_nouveau: MIT License.
+- GCC runtime (libstdc++, libgcc): GPL-3.0 with the GCC Runtime Library
+  Exception.
+
+Source code: https://github.com/FurryLilManChild/SonicRush-nx
+
+Sonic Rush and Sonic the Hedgehog are trademarks of SEGA. Nintendo DS and
+Nintendo Switch are trademarks of Nintendo. This project is not affiliated
+with or endorsed by SEGA or Nintendo.

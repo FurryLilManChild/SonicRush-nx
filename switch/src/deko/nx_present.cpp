@@ -40,6 +40,8 @@ dk::Image g_src[kSlots][3];
 uint32_t* g_src_cpu[kSlots][3];
 uint32_t g_src_off[kSlots][3];
 dk::Image g_black;
+dk::Image g_menu_img[kSlots];
+uint32_t* g_menu_cpu[kSlots];
 dk::CmdBuf g_cmd;
 dk::Fence g_fence[kSlots];
 bool g_fence_used[kSlots];
@@ -103,7 +105,7 @@ struct HdParams {
 // moves on; the thread presents the newest complete frame (an older one that
 // was never shown is dropped, as a display at 60 Hz would drop it anyway).
 struct Job {
-    std::vector<uint32_t> top, bottom, hd_top, hd_below;
+    std::vector<uint32_t> top, bottom, hd_top, hd_below, menu;
     SrnxWideParams wide_p{};
     std::vector<uint8_t> wide_data;
     NxPresentFrame f{};
@@ -116,6 +118,19 @@ std::mutex g_job_m;
 std::condition_variable g_job_cv;
 std::thread g_thread;
 void present_now(const NxPresentFrame& f);
+// SonicRush-nx 0.1: the port menu over whatever the frame shows, on every
+// path (stage view, one-screen layouts, the DS screens), so it never depends
+// on which screen is where
+void overlay_menu(int slot, const NxPresentFrame& f)
+{
+    if (!f.menu) return;
+    std::memcpy(g_menu_cpu[slot], f.menu, kDsW * kDsH * 4);
+    dk::ImageView fb_view{g_fb[slot]};
+    dk::ImageView menu_view{g_menu_img[slot]};
+    const uint32_t w = kDsW * 3, h = kDsH * 3;
+    g_cmd.blitImage(menu_view, {0, 0, 0, kDsW, kDsH, 1}, fb_view, {(kFbW - w) / 2, (kFbH - h) / 2, 0, w, h, 1},
+                    DkBlitFlag_FilterNearest);
+}
 void thread_main()
 {
     for (;;) {
@@ -305,7 +320,7 @@ bool nx_present_init()
     }
 
     const uint32_t src_bytes = align_up(
-        kSlots * (2 * (kDsW * kDsH * 4 + 0x1000) + kHudW * kHudH * 4 + 0x1000) + 16 * 16 * 4 + 0x1000,
+        kSlots * (3 * (kDsW * kDsH * 4 + 0x1000) + kHudW * kHudH * 4 + 0x1000) + 16 * 16 * 4 + 0x1000,
         DK_MEMBLOCK_ALIGNMENT);
     g_src_mem = dk::MemBlockMaker{dev, src_bytes}
         .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
@@ -315,6 +330,7 @@ bool nx_present_init()
         make_pitch_image(g_src[i][0], g_src_cpu[i][0], kDsW, kDsH, off);
         make_pitch_image(g_src[i][1], g_src_cpu[i][1], kDsW, kDsH, off, &g_src_off[i][1]);
         make_pitch_image(g_src[i][2], g_src_cpu[i][2], kHudW, kHudH, off);
+        make_pitch_image(g_menu_img[i], g_menu_cpu[i], kDsW, kDsH, off);
     }
     uint32_t* black = nullptr;
     make_pitch_image(g_black, black, 16, 16, off);
@@ -505,6 +521,7 @@ void present_now(const NxPresentFrame& f)
                                 DkBlitFlag_FilterNearest);
             }
         }
+        overlay_menu(slot, f);
         g_cmd.signalFence(g_fence[slot]);
         g_fence_used[slot] = true;
         g_queue.submitCommands(g_cmd.finishList());
@@ -548,6 +565,7 @@ void present_now(const NxPresentFrame& f)
         g_cmd.blitImage(wide_view, {0, 0, 0, (uint32_t)vw, (uint32_t)vh, 1}, fb_view,
                         {(kFbW - dw) / 2, (kFbH - dh) / 2, 0, dw, dh, 1},
                         whole ? DkBlitFlag_FilterNearest : DkBlitFlag_FilterLinear);
+        overlay_menu(slot, f);
         g_cmd.signalFence(g_fence[slot]);
         g_fence_used[slot] = true;
         g_queue.submitCommands(g_cmd.finishList());
@@ -666,6 +684,7 @@ void present_now(const NxPresentFrame& f)
         g_cmd.blitImage(comp_view, {0, 0, 0, kFbW, kFbH, 1}, real_fb, {0, 0, 0, kFbW, kFbH, 1},
                         DkBlitFlag_FilterNearest);
     }
+    overlay_menu(slot, f);
     g_cmd.signalFence(g_fence[slot]);
     g_fence_used[slot] = true;
     g_queue.submitCommands(g_cmd.finishList());
@@ -705,6 +724,7 @@ void nx_present_frame(const NxPresentFrame& in, NxPresentTicks* ticks)
     };
     j.f.top = take(j.top, in.top, kDsW * kDsH);
     j.f.bottom = take(j.bottom, in.bottom, kDsW * kDsH);
+    j.f.menu = take(j.menu, in.menu, kDsW * kDsH);
     j.f.wide_p = nullptr;
     j.f.wide_data = nullptr;
     if (in.wide_p && in.wide_data && in.wide_p->view_w > 0 && in.wide_p->view_w <= kWideMaxW &&

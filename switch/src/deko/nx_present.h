@@ -47,6 +47,9 @@ struct NxPresentFrame
     const struct SrnxWideParams* wide_p;
     const uint8_t* wide_data;
     int srnx_special;           // one-screen mode outside stages (srnx_special_compose), 0 = none
+    // SonicRush-nx 0.1: the port menu, 256 x 192, drawn last over whatever
+    // the frame shows (3x, centred), nullptr when closed
+    const uint32_t* menu;
 };
 
 struct NxPresentTicks { uint64_t upload, draw, swap; };
