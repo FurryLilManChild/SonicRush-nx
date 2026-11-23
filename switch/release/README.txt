@@ -56,7 +56,7 @@ Display: screen layout, stage zoom (how much of the level the Switch Port
 view shows), show speed.
 Level select: pick a zone and act (or boss, or special stage); the next act
 you start from the world map starts there instead.
-Options: CPU clock (Stock, 1224, 1428 or 1785 MHz; 1785 by default, Stock
+Options: CPU clock (Stock, 1224, 1428 or 1785 MHz; 1428 by default, Stock
 does not hold 60 fps in the busiest scenes yet), audio stretch.
 
 

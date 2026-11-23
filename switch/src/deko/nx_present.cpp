@@ -121,8 +121,25 @@ void present_now(const NxPresentFrame& f);
 // SonicRush-nx 0.1: the port menu over whatever the frame shows, on every
 // path (stage view, one-screen layouts, the DS screens), so it never depends
 // on which screen is where
+int draw_text(uint32_t* buf, int w, int h, int x, int y, const char* text,
+              const char* (*glyph)(char));
 void overlay_menu(int slot, const NxPresentFrame& f)
 {
+    // the speed text (Display > Show speed) top left, on every path too
+    // (0.5.0: the one-screen layouts had none, so special stages showed no fps)
+    if (f.hud_text && *f.hud_text) {
+        uint32_t* hud = g_src_cpu[slot][2];
+        for (int i = 0; i < kHudW * kHudH; ++i) hud[i] = 0xFF000000u;
+        int hud_chars = draw_text(hud, kHudW, kHudH, 2, 2, f.hud_text, f.glyph);
+        if (hud_chars > (kHudW - 4) / 6) hud_chars = (kHudW - 4) / 6;
+        if (hud_chars > 0) {
+            const uint32_t hw = (uint32_t)(hud_chars * 6 + 3);
+            dk::ImageView fb_hud{g_fb[slot]};
+            dk::ImageView hud_view{g_src[slot][2]};
+            g_cmd.blitImage(hud_view, {0, 0, 0, hw, 11, 1}, fb_hud, {6, 6, 0, hw * 3, 33, 1},
+                            DkBlitFlag_FilterNearest);
+        }
+    }
     if (!f.menu) return;
     std::memcpy(g_menu_cpu[slot], f.menu, kDsW * kDsH * 4);
     dk::ImageView fb_view{g_fb[slot]};
@@ -509,18 +526,6 @@ void present_now(const NxPresentFrame& f)
         g_cmd.blitImage(gpu ? gpu_view : wide_view, {0, 0, 0, (uint32_t)vw, (uint32_t)vh, 1}, fb_view,
                         {(kFbW - dw) / 2, (kFbH - dh) / 2, 0, dw, dh, 1},
                         whole ? DkBlitFlag_FilterNearest : DkBlitFlag_FilterLinear);
-        if (f.hud_text && *f.hud_text) {
-            uint32_t* hud = g_src_cpu[slot][2];
-            for (int i = 0; i < kHudW * kHudH; ++i) hud[i] = 0xFF000000u;
-            int hud_chars = draw_text(hud, kHudW, kHudH, 2, 2, f.hud_text, f.glyph);
-            if (hud_chars > (kHudW - 4) / 6) hud_chars = (kHudW - 4) / 6;
-            if (hud_chars > 0) {
-                const uint32_t hw = (uint32_t)(hud_chars * 6 + 3);
-                dk::ImageView hud_view{g_src[slot][2]};
-                g_cmd.blitImage(hud_view, {0, 0, 0, hw, 11, 1}, fb_view, {6, 6, 0, hw * 3, 33, 1},
-                                DkBlitFlag_FilterNearest);
-            }
-        }
         overlay_menu(slot, f);
         g_cmd.signalFence(g_fence[slot]);
         g_fence_used[slot] = true;
@@ -575,7 +580,6 @@ void present_now(const NxPresentFrame& f)
     }
     uint32_t* top = g_src_cpu[slot][0];
     uint32_t* bottom = g_src_cpu[slot][1];
-    uint32_t* hud = g_src_cpu[slot][2];
     copy_screen(top, f.top, f.dim_top);
     const bool draw_bottom = f.bottom_rect.w > 0;
     const bool panels = g_panel_ok && f.npanels > 0 && f.bottom;
@@ -583,12 +587,6 @@ void present_now(const NxPresentFrame& f)
         copy_screen(bottom, f.bottom, false);
         if (draw_bottom && f.cursor) draw_cursor(bottom, f.cursor_x, f.cursor_y);
         if (draw_bottom && f.notice && *f.notice) draw_notice(bottom, f.notice, f.glyph);
-    }
-    int hud_chars = 0;
-    if (f.hud_text && *f.hud_text) {
-        for (int i = 0; i < kHudW * kHudH; ++i) hud[i] = 0xFF000000u;
-        hud_chars = draw_text(hud, kHudW, kHudH, 2, 2, f.hud_text, f.glyph);
-        if (hud_chars > (kHudW - 4) / 6) hud_chars = (kHudW - 4) / 6;
     }
     uint64_t t2 = armGetSystemTick();
 
@@ -646,12 +644,6 @@ void present_now(const NxPresentFrame& f)
     if (draw_bottom && f.bottom_over_top)
         g_cmd.blitImage(bottom_view, {0, 0, 0, kDsW, kDsH, 1}, fb_view, rect(f.bottom_rect),
                         DkBlitFlag_FilterNearest);
-    if (hud_chars > 0) {
-        const uint32_t hw = (uint32_t)(hud_chars * 6 + 3);
-        dk::ImageView hud_view{g_src[slot][2]};
-        g_cmd.blitImage(hud_view, {0, 0, 0, hw, 11, 1}, fb_view, {6, 6, 0, hw * 3, 33, 1},
-                        DkBlitFlag_FilterNearest);
-    }
     if (panels) {
         g_cmd.barrier(DkBarrier_Full, DkInvalidateFlags_L2Cache);
         g_cmd.bindShaders(DkStageFlag_Compute, {&g_panel});

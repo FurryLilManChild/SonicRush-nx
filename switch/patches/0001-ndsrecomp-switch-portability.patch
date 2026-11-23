@@ -499,7 +499,7 @@ index 022a1af..8c31a75 100644
  #endif
      if (supported) {
 diff --git a/runner/src/frontend.cpp b/runner/src/frontend.cpp
-index 7d9d4eb..f742d3a 100644
+index 7d9d4eb..509da25 100644
 --- a/runner/src/frontend.cpp
 +++ b/runner/src/frontend.cpp
 @@ -4,6 +4,7 @@
@@ -1024,9 +1024,9 @@ index 7d9d4eb..f742d3a 100644
 +// (1785 MHz, the clock retail games use while loading). nx_platform.c.
 +#if defined(SRNX)
 +// SonicRush-nx 0.5.0: four clock steps (nx_platform.c nx_clocks_set_boost):
-+// 0 stock 1020, 1 1224, 2 1428, 3 1785 MHz. Default 1785 (stock does not
-+// hold 60 in heavy scenes yet).
-+int g_nx_cpu_boost = 3;
++// 0 stock 1020, 1 1224, 2 1428, 3 1785 MHz. (Stock does not
++// hold 60 in heavy scenes yet). Mark's clock test (2026-11-23): default 1428.
++int g_nx_cpu_boost = 2;
 +const char* const kNxCpuClockNames[] = {"Stock (1020 MHz)", "1224 MHz", "1428 MHz", "1785 MHz"};
 +constexpr int kNxCpuClockCount = 4;
 +#else
