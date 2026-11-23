@@ -196,7 +196,7 @@ nx_generate_nacp(
 # hbmenu icon: the repo's original icon, or a private one from SRNX_ICON (a
 # path outside the repo, never committed; switch-test35: Mark's Sonic Rush
 # art for his own test builds).
-set(SRNX_ICON_FILE "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.jpg")
+set(SRNX_ICON_FILE "${CMAKE_CURRENT_SOURCE_DIR}/release/icon.jpg")   # 0.5.0: original release icon
 set(SRNX_ICON "" CACHE STRING "private hbmenu icon (path outside the repo)")
 if(SRNX_ICON AND EXISTS "${SRNX_ICON}")
     set(SRNX_ICON_FILE "${SRNX_ICON}")

@@ -147,10 +147,17 @@ void nx_clocks_restore(void) {
     g_clk_open = false;
 }
 
-// Port menu Speed > CPU clock: 1 boost (NX_CPU_BOOST_HZ), 0 stock 1020 MHz.
+// Port menu Options > CPU clock. MPH-nx: 0 stock 1020 MHz, 1 boost
+// (NX_CPU_BOOST_HZ). SonicRush-nx 0.5.0: four steps, 0 stock 1020, 1 1224,
+// 2 1428, 3 1785 MHz (all steps of the Switch's CPU clock table).
 void nx_clocks_set_boost(int on) {
     if (!g_clk_open) return;
+#if defined(SRNX)
+    static const u32 kHz[4] = {1020000000u, 1224000000u, 1428000000u, NX_CPU_BOOST_HZ};
+    const u32 hz = kHz[on < 0 ? 0 : on > 3 ? 3 : on];
+#else
     const u32 hz = on ? NX_CPU_BOOST_HZ : 1020000000u;
+#endif
     if (R_SUCCEEDED(clkrstSetClockRate(&g_cpu_session, hz))) g_cpu_applied_hz = hz;
     u32 now = 0;
     clkrstGetClockRate(&g_cpu_session, &now);

@@ -56,8 +56,8 @@ Display: screen layout, stage zoom (how much of the level the Switch Port
 view shows), show speed.
 Level select: pick a zone and act (or boss, or special stage); the next act
 you start from the world map starts there instead.
-Options: CPU clock (Boost by default; Stock does not hold 60 fps in the
-busiest scenes yet), audio stretch.
+Options: CPU clock (Stock, 1224, 1428 or 1785 MHz; 1785 by default, Stock
+does not hold 60 fps in the busiest scenes yet), audio stretch.
 
 
 Known limits
@@ -67,7 +67,7 @@ Known limits
   layout's extra width beyond what the DS screens showed.
 - Some screens are shown as both DS screens shrunk to fit rather than a
   true widescreen layout.
-- Boost CPU clock is needed for a steady 60 fps.
+- A raised CPU clock is needed for a steady 60 fps.
 - DS wireless and online play are not supported.
 - USA ROM version 0 only.
 

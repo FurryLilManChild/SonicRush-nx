@@ -9,6 +9,7 @@
 - CPU clock defaults to Boost. Test40/41 logs at Boost (190 ten-second samples): emulation thread median 9.2 ms a frame, 90th percentile 12.8, max 13.3; scaled to stock 1020 MHz that is about 16, 22 and 23 ms against 16.7, so stock does not hold 60 in heavy scenes yet.
 - Replays, the stick-click capture and the wild-call capture only with developer.on.
 - Original hbmenu icon (switch/release/icon.jpg: abstract streaks and plain text; the private official-art icon is not used for the release).
+- CPU clock (Mark): four steps, Stock 1020, 1224, 1428, 1785 MHz (nx_platform.c table, all CPU clock table steps); saved as cpu_clock (0-3), an old cpu_boost=1 reads as 1785. Default 1785 until Mark's clock test picks one. Release icon is now the build default (CMake and build.sh no longer fall back to the private official-art icon). Rebuilt: nro sha256 2d92abb4..., zip ace10eed..., romscan 0 of 1609.
 - Release zip: switch/sonicrush-nx/ (nro, game.toml), README.txt, LICENSES/ (GPL-3.0, ndsrecomp MIT and recompiler PolyForm notice, FreeBIOS, arm-recomp-core, recomp-ui, imgui, SDL2, deko3d, third-party notices). romscan: 0 of 1609 sampled ROM chunks in the .nro. nro sha256 c48e44ac..., zip sha256 46d427b5....
 
 ## 2026-11-22: test40 results, switch-test41 changes (not built yet)
