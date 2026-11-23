@@ -30,12 +30,35 @@ Your game save is kept in /switch/sonicrush-nx/ next to the .nro.
 Screen layouts (port menu, Display)
 -----------------------------------
 
-Switch Port (default): one 16:9 picture. In stages, a wide view that follows
-Sonic, with the HUD on top. Bosses, special stages, act and boss title cards,
-results, menus and the world map each get their own one-screen layout.
-
 Original stacked: the two DS screens as on the DS, one above the other with
-the gap between them.
+the gap between them, everywhere in the game.
+
+Switch Port (default): one 16:9 picture, chosen screen by screen. The port
+recognises which screen is up from the game's own code running that frame
+(not from the pixels), and switches the layout to match:
+
+- Acts: a wide view of the level that follows Sonic, drawn from the game's
+  own level, sprites and 3D, with the HUD on top. Display > Stage zoom sets
+  how much of the level it shows.
+- Water and other strips the DS only drew down to its screen's bottom edge
+  are carried on to the bottom of the wide view.
+- Act and boss title cards, the "ready" card after a life is lost, and the
+  act results (score tally): both DS screens shrunk into one tall picture.
+- Bosses: the arena (the top screen) fills the picture, with the boss's
+  health bar upright at the side. The boss layout holds through the whole
+  fight, including the white fade after a lost life and the moments the
+  boss pauses; only another screen's own code can end it.
+- Special stages: the half-pipe in the middle, rings and the goal in the
+  left bar, progress in the right bar.
+- Special stage intro and the emerald result: the bottom screen, with the
+  banner and the emerald ring placed beside it.
+- Cutscenes: the top screen fills the picture.
+- World map: the map at full height, the status panel in a corner.
+- Title screen, main menu, character select, logos and anything not listed:
+  both screens as one tall picture, trimmed to what matters on each.
+
+The port menu and the speed counter are drawn over whatever layout is
+showing.
 
 
 Controls
@@ -43,10 +66,24 @@ Controls
 
 The Switch buttons work as the DS buttons in the same places (face buttons,
 L and R, + for Start, D-pad or left stick for the D-pad).
-Special stages: A or B taps the highlighted target, the way the DS stylus
-would.
 
 Hold - (minus) for half a second to open the port menu.
+
+
+Special stages (the DS played these with the stylus)
+------------------------------------------------------
+
+- Steer: left stick. Sonic goes to the point of the half-pipe the stick
+  points at: stick down keeps him at the bottom middle, left or right moves
+  him up that side.
+- Number prompts during a jump (the numbered circles): press A or B to tap
+  the circle the game has lit up next. Press once per circle, in time.
+- Robots: press A or B (with no number prompt on screen) to homing-attack
+  the robot the game targets.
+- "Touch to continue" on the special stage intro: A or B.
+- Everything else uses the buttons as above.
+
+No other part of Sonic Rush needs the touch screen.
 
 
 Port menu
